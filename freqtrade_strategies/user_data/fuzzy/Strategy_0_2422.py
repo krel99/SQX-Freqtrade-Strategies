@@ -23,6 +23,11 @@ from freqtrade.exchange import timeframe_to_minutes
 import talib.abstract as ta
 import pandas_ta as pta
 
+# Suppress pandas_ta FutureWarnings about ChainedAssignment
+import warnings
+
+warnings.filterwarnings("ignore", category=FutureWarning, module="pandas_ta")
+
 
 class Strategy_0_2422(IStrategy):
     """
@@ -63,23 +68,23 @@ class Strategy_0_2422(IStrategy):
 
     # Strategy parameters from pseudocode
     # Hyperparameters for optimization
-    tema_period = IntParameter(30, 50, default=40, space="buy")
-    di_period = IntParameter(15, 30, default=20, space="buy")
-    vwap_period = IntParameter(30, 70, default=50, space="buy")
-    lwma_period = IntParameter(30, 70, default=50, space="buy")
-    period_1 = IntParameter(15, 35, default=25, space="buy")
+    tema_period = IntParameter(30, 50, default=40, space="entry")
+    di_period = IntParameter(15, 30, default=20, space="entry")
+    vwap_period = IntParameter(30, 70, default=50, space="entry")
+    lwma_period = IntParameter(30, 70, default=50, space="entry")
+    period_1 = IntParameter(15, 35, default=25, space="entry")
 
     # Entry/Exit parameters
-    price_entry_mult = DecimalParameter(0.5, 1.5, default=1.1, space="buy")
-    exit_after_bars = IntParameter(2, 8, default=4, space="sell")
-    profit_target_coef = DecimalParameter(3.0, 5.5, default=4.2, space="sell")
-    stop_loss_pct = DecimalParameter(6.0, 11.0, default=8.6, space="sell")
-    ema_period = IntParameter(30, 60, default=45, space="buy")
-    atr_period = IntParameter(25, 50, default=37, space="buy")
+    price_entry_mult = DecimalParameter(0.5, 1.5, default=1.1, space="entry")
+    exit_after_bars = IntParameter(2, 8, default=4, space="exit")
+    profit_target_coef = DecimalParameter(3.0, 5.5, default=4.2, space="exit")
+    stop_loss_pct = DecimalParameter(6.0, 11.0, default=8.6, space="exit")
+    ema_period = IntParameter(30, 60, default=45, space="entry")
+    atr_period = IntParameter(25, 50, default=37, space="entry")
 
     # Parabolic SAR parameters
-    sar_af_start = DecimalParameter(0.05, 0.15, default=0.109, space="buy")
-    sar_af_max = DecimalParameter(0.2, 0.35, default=0.28, space="buy")
+    sar_af_start = DecimalParameter(0.05, 0.15, default=0.109, space="entry")
+    sar_af_max = DecimalParameter(0.2, 0.35, default=0.28, space="entry")
 
     def informative_pairs(self):
         """
@@ -103,9 +108,7 @@ class Strategy_0_2422(IStrategy):
         )
 
         # TEMA (Triple Exponential Moving Average)
-        dataframe["tema"] = ta.TEMA(
-            dataframe["close"], timeperiod=self.tema_period.value
-        )
+        dataframe["tema"] = ta.TEMA(dataframe["close"], timeperiod=self.tema_period.value)
 
         # ADX and DI
         dataframe["adx"] = ta.ADX(dataframe, timeperiod=self.di_period.value)
@@ -113,15 +116,22 @@ class Strategy_0_2422(IStrategy):
         dataframe["minus_di"] = ta.MINUS_DI(dataframe, timeperiod=self.di_period.value)
 
         # VWAP - using pandas_ta
-        dataframe["vwap"] = pta.vwap(
-            dataframe["high"], dataframe["low"], dataframe["close"], dataframe["volume"]
+        # Temporarily set datetime index for VWAP calculation
+        original_index = dataframe.index
+        dataframe_with_date_index = dataframe.set_index("date")
+        vwap_result = pta.vwap(
+            dataframe_with_date_index["high"],
+            dataframe_with_date_index["low"],
+            dataframe_with_date_index["close"],
+            dataframe_with_date_index["volume"],
+            anchor=None,  # Don't use anchor to avoid period grouping issues
         )
+        # Reset to original index and assign VWAP values
+        dataframe["vwap"] = vwap_result.values if vwap_result is not None else dataframe["close"]
 
         # Monthly High/Low approximation (30 days * 24 hours * 4 15-min candles)
         monthly_period = 30 * 24 * 4
-        dataframe["high_monthly"] = (
-            dataframe["high"].rolling(window=monthly_period).max()
-        )
+        dataframe["high_monthly"] = dataframe["high"].rolling(window=monthly_period).max()
         dataframe["low_monthly"] = dataframe["low"].rolling(window=monthly_period).min()
 
         # EMA for entry calculations
@@ -131,9 +141,7 @@ class Strategy_0_2422(IStrategy):
 
         # ATR for entry calculations
         dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
-        dataframe["atr_20"] = ta.ATR(
-            dataframe, timeperiod=20
-        )  # Fixed ATR for profit target
+        dataframe["atr_20"] = ta.ATR(dataframe, timeperiod=20)  # Fixed ATR for profit target
 
         # Session Open approximation (12:07 UTC)
         # Calculate session open based on time
@@ -147,9 +155,7 @@ class Strategy_0_2422(IStrategy):
         ).ffill()
 
         # Add 1h informative indicators
-        informative_1h = self.dp.get_pair_dataframe(
-            pair=metadata["pair"], timeframe="1h"
-        )
+        informative_1h = self.dp.get_pair_dataframe(pair=metadata["pair"], timeframe="1h")
 
         # Calculate 1h indicators
         # LWMA approximation using WMA
@@ -184,8 +190,7 @@ class Strategy_0_2422(IStrategy):
         # Condition 1: ParabolicSAR[1] <= HighMonthly[1]
         if index > 1:
             conditions.append(
-                dataframe.iloc[index - 1]["sar"]
-                <= dataframe.iloc[index - 1]["high_monthly"]
+                dataframe.iloc[index - 1]["sar"] <= dataframe.iloc[index - 1]["high_monthly"]
             )
         else:
             conditions.append(False)
@@ -203,25 +208,21 @@ class Strategy_0_2422(IStrategy):
         # Condition 3: ADX DI Minus[5] is falling
         if index > 5:
             conditions.append(
-                dataframe.iloc[index - 5]["minus_di"]
-                > dataframe.iloc[index - 4]["minus_di"]
+                dataframe.iloc[index - 5]["minus_di"] > dataframe.iloc[index - 4]["minus_di"]
             )
         else:
             conditions.append(False)
 
         # Condition 4: VWAP[1] is rising
         if index > 1:
-            conditions.append(
-                dataframe.iloc[index - 1]["vwap"] > dataframe.iloc[index - 2]["vwap"]
-            )
+            conditions.append(dataframe.iloc[index - 1]["vwap"] > dataframe.iloc[index - 2]["vwap"])
         else:
             conditions.append(False)
 
         # Condition 5: LWMA(1h)[3] <= High(1h)[2]
         if index > 3:
             conditions.append(
-                dataframe.iloc[index - 3]["lwma_1h"]
-                <= dataframe.iloc[index - 2]["high_1h"]
+                dataframe.iloc[index - 3]["lwma_1h_1h"] <= dataframe.iloc[index - 2]["high_1h"]
             )
         else:
             conditions.append(False)
@@ -247,8 +248,7 @@ class Strategy_0_2422(IStrategy):
         # Condition 1: ParabolicSAR[1] >= LowMonthly[1]
         if index > 1:
             conditions.append(
-                dataframe.iloc[index - 1]["sar"]
-                >= dataframe.iloc[index - 1]["low_monthly"]
+                dataframe.iloc[index - 1]["sar"] >= dataframe.iloc[index - 1]["low_monthly"]
             )
         else:
             conditions.append(False)
@@ -266,25 +266,21 @@ class Strategy_0_2422(IStrategy):
         # Condition 3: ADX DI Plus[5] is falling
         if index > 5:
             conditions.append(
-                dataframe.iloc[index - 5]["plus_di"]
-                > dataframe.iloc[index - 4]["plus_di"]
+                dataframe.iloc[index - 5]["plus_di"] > dataframe.iloc[index - 4]["plus_di"]
             )
         else:
             conditions.append(False)
 
         # Condition 4: VWAP[1] is falling
         if index > 1:
-            conditions.append(
-                dataframe.iloc[index - 1]["vwap"] < dataframe.iloc[index - 2]["vwap"]
-            )
+            conditions.append(dataframe.iloc[index - 1]["vwap"] < dataframe.iloc[index - 2]["vwap"])
         else:
             conditions.append(False)
 
         # Condition 5: LWMA(1h)[3] >= Low(1h)[2]
         if index > 3:
             conditions.append(
-                dataframe.iloc[index - 3]["lwma_1h"]
-                >= dataframe.iloc[index - 2]["low_1h"]
+                dataframe.iloc[index - 3]["lwma_1h_1h"] >= dataframe.iloc[index - 2]["low_1h"]
             )
         else:
             conditions.append(False)
@@ -324,10 +320,7 @@ class Strategy_0_2422(IStrategy):
                     dataframe.loc[i, "enter_long_limit"] = limit_price
 
             # Short entry (only if not long entry)
-            if (
-                self.fuzzy_logic_short_entry(dataframe, i)
-                and dataframe.loc[i, "enter_long"] == 0
-            ):
+            if self.fuzzy_logic_short_entry(dataframe, i) and dataframe.loc[i, "enter_long"] == 0:
                 dataframe.loc[i, "enter_short"] = 1
                 # Calculate limit order price
                 if i > 5:
@@ -380,18 +373,14 @@ class Strategy_0_2422(IStrategy):
 
         # Exit after N bars
         trade_duration = (current_time - trade.open_date_utc).total_seconds() / 60
-        if trade_duration > (
-            self.exit_after_bars.value * timeframe_to_minutes(self.timeframe)
-        ):
+        if trade_duration > (self.exit_after_bars.value * timeframe_to_minutes(self.timeframe)):
             return "exit_after_bars"
 
         # Profit target based on ATR
         if len(dataframe) > 0:
             current_atr = dataframe.iloc[-1]["atr_20"]
             if current_atr > 0:
-                profit_target = (
-                    self.profit_target_coef.value * current_atr
-                ) / trade.open_rate
+                profit_target = (self.profit_target_coef.value * current_atr) / trade.open_rate
                 if current_profit >= profit_target:
                     return "profit_target_reached"
 
