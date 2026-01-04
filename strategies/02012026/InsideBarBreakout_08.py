@@ -40,10 +40,8 @@ class InsideBarBreakout_08(IStrategy):
     # Strategy interface version
     INTERFACE_VERSION = 3
 
-    # Optimal timeframe for the strategy
-    timeframe = "5m"
+    timeframe = "15m"
 
-    # Can this strategy go short?
     can_short = True
 
     # Minimal ROI designed for the strategy
@@ -242,7 +240,9 @@ class InsideBarBreakout_08(IStrategy):
                 & (
                     dataframe["mother_size_pct"] <= self.max_mother_bar_size.value
                 )  # Mother bar not too large
-                & (~dataframe["false_breakout_up"].shift(1))  # No recent false breakout
+                & (
+                    dataframe["false_breakout_up"].shift(1) == False
+                )  # No recent false breakout
                 & (dataframe["momentum"] > 0)  # Positive momentum
                 & (dataframe["rsi"] > 45)  # Not oversold
                 & (dataframe["rsi"] < 70)  # Not overbought
@@ -265,7 +265,7 @@ class InsideBarBreakout_08(IStrategy):
                     dataframe["mother_size_pct"] <= self.max_mother_bar_size.value
                 )  # Mother bar not too large
                 & (
-                    ~dataframe["false_breakout_down"].shift(1)
+                    dataframe["false_breakout_down"].shift(1) == False
                 )  # No recent false breakout
                 & (dataframe["momentum"] < 0)  # Negative momentum
                 & (dataframe["rsi"] < 55)  # Not overbought

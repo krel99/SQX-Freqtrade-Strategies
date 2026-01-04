@@ -1,0 +1,42 @@
+{
+  "strategy_name": "BBMeanReversion_04",
+  "params": {
+    "trailing": {
+      "trailing_stop": true,
+      "trailing_stop_positive": 0.012,
+      "trailing_stop_positive_offset": 0.018,
+      "trailing_only_offset_is_reached": true
+    },
+    "max_open_trades": {
+      "max_open_trades": 5
+    },
+    "buy": {
+      "adx_max": 15,
+      "adx_period": 10,
+      "bb_period": 25,
+      "bb_std": 2.074,
+      "kc_mult": 1.241,
+      "kc_period": 17,
+      "rsi_overbought": 73,
+      "rsi_oversold": 25,
+      "rsi_period": 14,
+      "volume_ma_period": 26,
+      "volume_threshold": 0.87
+    },
+    "sell": {
+      "bb_exit_ratio": 0.422,
+      "take_profit_pct": 0.026
+    },
+    "roi": {
+      "0": 0.215,
+      "100": 0.049,
+      "228": 0.028,
+      "511": 0
+    },
+    "stoploss": {
+      "stoploss": -0.188
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-01-03 21:51:20.996252+00:00"
+}

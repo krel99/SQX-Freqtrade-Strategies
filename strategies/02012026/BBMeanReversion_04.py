@@ -40,10 +40,8 @@ class BBMeanReversion_04(IStrategy):
     # Strategy interface version
     INTERFACE_VERSION = 3
 
-    # Optimal timeframe for the strategy
-    timeframe = "5m"
+    timeframe = "15m"
 
-    # Can this strategy go short?
     can_short = True
 
     # Minimal ROI designed for the strategy
@@ -138,7 +136,6 @@ class BBMeanReversion_04(IStrategy):
             dataframe["volume_ma"] * self.volume_threshold.value
         )
 
-        # ATR for volatility
         dataframe["atr"] = ta.ATR(dataframe, timeperiod=14)
 
         # Keltner Channels for squeeze detection
@@ -229,7 +226,9 @@ class BBMeanReversion_04(IStrategy):
                     )  # Or strong downward momentum (oversold)
                 )
                 & (dataframe["dist_from_support"] < 0.02)  # Near support
-                & (~dataframe["bb_squeeze"].shift(1))  # Not coming out of squeeze
+                & (
+                    dataframe["bb_squeeze"].shift(1).fillna(True) == False
+                )  # Not coming out of squeeze
             ),
             "enter_long",
         ] = 1
@@ -251,7 +250,9 @@ class BBMeanReversion_04(IStrategy):
                     )  # Or strong upward momentum (overbought)
                 )
                 & (dataframe["dist_from_resistance"] < 0.02)  # Near resistance
-                & (~dataframe["bb_squeeze"].shift(1))  # Not coming out of squeeze
+                & (
+                    dataframe["bb_squeeze"].shift(1).fillna(True) == False
+                )  # Not coming out of squeeze
             ),
             "enter_short",
         ] = 1

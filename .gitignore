@@ -1,0 +1,14 @@
+backtest_results
+data
+freqaimodels
+hyperopt_results
+hyperopts
+logs
+notebooks
+quick_scan_results
+hyperopt.lock
+hyperopt_results.db
+__pycache__
+
+*.json
+!*config*.json

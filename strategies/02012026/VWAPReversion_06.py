@@ -40,10 +40,8 @@ class VWAPReversion_06(IStrategy):
     # Strategy interface version
     INTERFACE_VERSION = 3
 
-    # Optimal timeframe for the strategy
-    timeframe = "5m"
+    timeframe = "15m"
 
-    # Can this strategy go short?
     can_short = True
 
     # Minimal ROI designed for the strategy

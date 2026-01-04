@@ -155,10 +155,10 @@ class KeltnerATRBreakout_10(IStrategy):
 
         # First close above/below band
         dataframe["breakout_up"] = dataframe["close_above_upper"] & (
-            ~dataframe["close_above_upper"].shift(1)
+            dataframe["close_above_upper"].shift(1) == False
         )
         dataframe["breakout_down"] = dataframe["close_below_lower"] & (
-            ~dataframe["close_below_lower"].shift(1)
+            dataframe["close_below_lower"].shift(1) == False
         )
 
         # Sustained breakout (multiple candles)
@@ -195,7 +195,7 @@ class KeltnerATRBreakout_10(IStrategy):
         dataframe["adx"] = ta.ADX(dataframe, timeperiod=self.adx_period.value)
 
         # Bollinger Bands for volatility comparison
-        bb = ta.BBANDS(dataframe, timeperiod=20, nbdevup=2, nbdevdn=2)
+        bb = ta.BBANDS(dataframe, timeperiod=20, nbdevup=2.0, nbdevdn=2.0)
         dataframe["bb_upper"] = bb["upperband"]
         dataframe["bb_lower"] = bb["lowerband"]
         dataframe["bb_width"] = dataframe["bb_upper"] - dataframe["bb_lower"]
@@ -257,7 +257,9 @@ class KeltnerATRBreakout_10(IStrategy):
                 & (dataframe["rsi"] < self.rsi_max_long.value)  # Not overbought
                 & (dataframe["roc"] > self.roc_threshold.value)  # Positive momentum
                 & (dataframe["adx"] > self.adx_min.value)  # Trending market
-                & (~dataframe["false_breakout_up"].shift(1))  # No recent false breakout
+                & (
+                    dataframe["false_breakout_up"].shift(1) == False
+                )  # No recent false breakout
                 & (dataframe["strong_candle"])  # Strong breakout candle
                 & (dataframe["ema_slope"] > 0)  # EMA trending up
                 & (
@@ -283,7 +285,7 @@ class KeltnerATRBreakout_10(IStrategy):
                 & (dataframe["roc"] < -self.roc_threshold.value)  # Negative momentum
                 & (dataframe["adx"] > self.adx_min.value)  # Trending market
                 & (
-                    ~dataframe["false_breakout_down"].shift(1)
+                    dataframe["false_breakout_down"].shift(1) == False
                 )  # No recent false breakout
                 & (dataframe["strong_candle"])  # Strong breakout candle
                 & (dataframe["ema_slope"] < 0)  # EMA trending down

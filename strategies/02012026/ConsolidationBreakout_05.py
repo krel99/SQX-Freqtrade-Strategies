@@ -39,10 +39,8 @@ class ConsolidationBreakout_05(IStrategy):
     # Strategy interface version
     INTERFACE_VERSION = 3
 
-    # Optimal timeframe for the strategy
-    timeframe = "5m"
+    timeframe = "15m"
 
-    # Can this strategy go short?
     can_short = True
 
     # Minimal ROI designed for the strategy
@@ -234,7 +232,9 @@ class ConsolidationBreakout_05(IStrategy):
                     dataframe["rsi"] > self.rsi_breakout_up.value
                 )  # RSI momentum confirmation
                 & (dataframe["momentum"] > 0.5)  # Positive momentum
-                & (~dataframe["false_breakout_up"].shift(1))  # No recent false breakout
+                & (
+                    dataframe["false_breakout_up"].shift(1) == False
+                )  # No recent false breakout
                 & (dataframe["strong_bullish"])  # Strong bullish candle
                 & (
                     dataframe["atr"] > dataframe["atr"].rolling(20).mean() * 0.8
@@ -256,7 +256,7 @@ class ConsolidationBreakout_05(IStrategy):
                 )  # RSI momentum confirmation
                 & (dataframe["momentum"] < -0.5)  # Negative momentum
                 & (
-                    ~dataframe["false_breakout_down"].shift(1)
+                    dataframe["false_breakout_down"].shift(1) == False
                 )  # No recent false breakout
                 & (dataframe["strong_bearish"])  # Strong bearish candle
                 & (

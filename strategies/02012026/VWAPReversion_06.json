@@ -1,0 +1,44 @@
+{
+  "strategy_name": "VWAPReversion_06",
+  "params": {
+    "trailing": {
+      "trailing_stop": true,
+      "trailing_stop_positive": 0.01,
+      "trailing_stop_positive_offset": 0.015,
+      "trailing_only_offset_is_reached": true
+    },
+    "max_open_trades": {
+      "max_open_trades": 5
+    },
+    "buy": {
+      "atr_mult": 0.606,
+      "atr_period": 13,
+      "dev_mult_lower": 2.019,
+      "dev_mult_upper": 2.473,
+      "dev_period": 26,
+      "end_hour": 18,
+      "rsi_overbought": 75,
+      "rsi_oversold": 27,
+      "rsi_period": 16,
+      "start_hour": 10,
+      "volume_ma_period": 25,
+      "volume_threshold": 0.947,
+      "vwap_period": 58
+    },
+    "sell": {
+      "partial_exit_ratio": 0.449,
+      "vwap_touch_exit": false
+    },
+    "roi": {
+      "0": 0.314,
+      "96": 0.066,
+      "209": 0.03,
+      "495": 0
+    },
+    "stoploss": {
+      "stoploss": -0.338
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-01-03 23:30:13.047247+00:00"
+}
