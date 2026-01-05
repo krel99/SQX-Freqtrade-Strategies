@@ -1,0 +1,34 @@
+function on_new_candle(ohlcv_data, timeframe='15m'):
+    # Assume ohlcv_data is list of [open, high, low, close, volume]
+    rsi = calculate_rsi(ohlcv_data, period=30)
+    macd_line, signal_line, histogram = calculate_macd(ohlcv_data, fast=12, slow=26, signal=9)
+    ema9 = calculate_ema(ohlcv_data, period=9)
+
+    current_rsi = rsi[-1]
+    prev_rsi = rsi[-2]
+    current_macd = macd_line[-1]
+    prev_macd = macd_line[-2]
+    current_signal = signal_line[-1]
+    prev_signal = signal_line[-2]
+    current_hist = histogram[-1]
+    prev_hist = histogram[-2]
+    current_close = ohlcv_data[-1]['close']
+
+    # Long signal
+    if (current_rsi > 47 and current_rsi > prev_rsi and
+        current_macd > current_signal and prev_macd <= prev_signal and
+        current_hist > 0 and current_close > ema9):
+        enter_long()
+
+    # Short signal
+    elif (current_rsi < 50 and current_rsi < prev_rsi and
+          current_macd < current_signal and prev_macd >= prev_signal and
+          current_hist < 0 and current_close < ema9):
+        enter_short()
+
+    # Manage open positions
+    if position_open():
+        sl = entry_price * (1 - 0.005 if long else 1 + 0.005)
+        tp = entry_price * (1 + 0.02 if long else 1 - 0.02)  # 2% TP for 1:4 RR example
+        check_stop_loss(sl)
+        check_take_profit(tp)
