@@ -10,5 +10,6 @@ hyperopt.lock
 hyperopt_results.db
 __pycache__
 
+
 *.json
 !*config*.json
