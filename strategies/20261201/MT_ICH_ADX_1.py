@@ -20,11 +20,11 @@ from freqtrade.strategy import (
 from datetime import datetime
 from freqtrade.persistence import Trade
 import talib.abstract as ta
+import technical.indicators as ftt
 
-
-class MT_ERMB_1(IStrategy):
+class MT_ICH_ADX_1(IStrategy):
     """
-    Multi-Timeframe Strategy with EMA, RSI, MACD, and Bollinger Bands
+    Multi-Timeframe Strategy with Ichimoku Cloud and ADX
     """
 
     # Strategy interface version
@@ -61,22 +61,17 @@ class MT_ERMB_1(IStrategy):
     # EMA (Higher Timeframe)
     buy_ema_htf_period = IntParameter(10, 50, default=20, space="buy")
 
-    # RSI (Lower Timeframe)
-    buy_rsi_ltf_period = IntParameter(10, 50, default=14, space="buy")
-    buy_rsi_ltf_threshold = IntParameter(20, 50, default=45, space="buy")
+    # Ichimoku Cloud (Lower Timeframe)
+    buy_ichimoku_conversion_period = IntParameter(5, 25, default=9, space="buy")
+    buy_ichimoku_base_period = IntParameter(20, 60, default=26, space="buy")
+    buy_ichimoku_span_b_period = IntParameter(40, 100, default=52, space="buy")
 
-    # MACD (Lower Timeframe)
-    buy_macd_ltf_fast = IntParameter(6, 24, default=12, space="buy")
-    buy_macd_ltf_slow = IntParameter(13, 52, default=26, space="buy")
-    buy_macd_ltf_signal = IntParameter(5, 18, default=9, space="buy")
-
-    # Bollinger Bands (Lower Timeframe)
-    buy_bb_ltf_period = IntParameter(10, 50, default=20, space="buy")
-    buy_bb_ltf_stddev = DecimalParameter(1.5, 3.0, default=2.0, space="buy")
+    # ADX (Lower Timeframe)
+    buy_adx_ltf_period = IntParameter(10, 50, default=14, space="buy")
+    buy_adx_ltf_threshold = IntParameter(15, 50, default=25, space="buy")
 
     # Exit Parameters
-    sell_rsi_ltf_threshold = IntParameter(50, 80, default=70, space="sell")
-
+    sell_adx_ltf_threshold = IntParameter(40, 80, default=60, space="sell")
 
     def informative_pairs(self):
         pairs = self.dp.current_whitelist()
@@ -89,24 +84,23 @@ class MT_ERMB_1(IStrategy):
         informative['ema_htf'] = ta.EMA(informative, timeperiod=self.buy_ema_htf_period.value)
         dataframe = merge_informative_pair(dataframe, informative, self.timeframe, self.informative_timeframe, ffill=True)
 
-
         # Lower Timeframe Indicators
-        dataframe['rsi_ltf'] = ta.RSI(dataframe, timeperiod=self.buy_rsi_ltf_period.value)
-        macd = ta.MACD(dataframe, fastperiod=self.buy_macd_ltf_fast.value, slowperiod=self.buy_macd_ltf_slow.value, signalperiod=self.buy_macd_ltf_signal.value)
-        dataframe['macd_ltf'] = macd['macd']
-        dataframe['macdsignal_ltf'] = macd['macdsignal']
-        bb = ta.BBANDS(dataframe, timeperiod=self.buy_bb_ltf_period.value, nbdevup=self.buy_bb_ltf_stddev.value, nbdevdn=self.buy_bb_ltf_stddev.value)
-        dataframe['bb_lower_ltf'] = bb['lowerband']
-        dataframe['bb_upper_ltf'] = bb['upperband']
+        ichimoku = ftt.ichimoku(dataframe, conversion_line_period=self.buy_ichimoku_conversion_period.value, base_line_period=self.buy_ichimoku_base_period.value, lagging_span_2_period=self.buy_ichimoku_span_b_period.value)
+        dataframe['tenkan_sen'] = ichimoku['tenkan_sen']
+        dataframe['kijun_sen'] = ichimoku['kijun_sen']
+        dataframe['senkou_span_a'] = ichimoku['senkou_span_a']
+        dataframe['senkou_span_b'] = ichimoku['senkou_span_b']
+        dataframe['adx_ltf'] = ta.ADX(dataframe, timeperiod=self.buy_adx_ltf_period.value)
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (dataframe['close'] > dataframe[f'ema_htf_{self.informative_timeframe}']) &
-            (dataframe['rsi_ltf'] < self.buy_rsi_ltf_threshold.value) &
-            (dataframe['macd_ltf'] > dataframe['macdsignal_ltf']) &
-            (dataframe['close'] < dataframe['bb_lower_ltf']),
+            (dataframe['tenkan_sen'] > dataframe['kijun_sen']) &
+            (dataframe['close'] > dataframe['senkou_span_a']) &
+            (dataframe['close'] > dataframe['senkou_span_b']) &
+            (dataframe['adx_ltf'] > self.buy_adx_ltf_threshold.value),
             'enter_long'
         ] = 1
 
@@ -114,7 +108,7 @@ class MT_ERMB_1(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
-            (dataframe['rsi_ltf'] > self.sell_rsi_ltf_threshold.value),
+            (dataframe['adx_ltf'] > self.sell_adx_ltf_threshold.value),
             'exit_long'
         ] = 1
 

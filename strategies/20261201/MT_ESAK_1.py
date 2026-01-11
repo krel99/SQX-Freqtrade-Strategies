@@ -55,7 +55,7 @@ class MT_ESAK_1(IStrategy):
     ignore_roi_if_entry_signal = True
 
     # Number of candles the strategy requires before producing valid signals
-    startup_candle_count: int = 30
+    startup_candle_count: int = 100
 
     # --- Hyperparameters ---
     # EMA (Higher Timeframe)

@@ -20,11 +20,11 @@ from freqtrade.strategy import (
 from datetime import datetime
 from freqtrade.persistence import Trade
 import talib.abstract as ta
+import technical.indicators as ftt
 
-
-class MT_ERMB_1(IStrategy):
+class MT_CMO_RSI_1(IStrategy):
     """
-    Multi-Timeframe Strategy with EMA, RSI, MACD, and Bollinger Bands
+    Multi-Timeframe Strategy with CMO and RSI
     """
 
     # Strategy interface version
@@ -61,22 +61,16 @@ class MT_ERMB_1(IStrategy):
     # EMA (Higher Timeframe)
     buy_ema_htf_period = IntParameter(10, 50, default=20, space="buy")
 
+    # CMO (Lower Timeframe)
+    buy_cmo_ltf_period = IntParameter(5, 25, default=14, space="buy")
+    buy_cmo_ltf_threshold = IntParameter(-50, 0, default=-25, space="buy")
+
     # RSI (Lower Timeframe)
     buy_rsi_ltf_period = IntParameter(10, 50, default=14, space="buy")
-    buy_rsi_ltf_threshold = IntParameter(20, 50, default=45, space="buy")
-
-    # MACD (Lower Timeframe)
-    buy_macd_ltf_fast = IntParameter(6, 24, default=12, space="buy")
-    buy_macd_ltf_slow = IntParameter(13, 52, default=26, space="buy")
-    buy_macd_ltf_signal = IntParameter(5, 18, default=9, space="buy")
-
-    # Bollinger Bands (Lower Timeframe)
-    buy_bb_ltf_period = IntParameter(10, 50, default=20, space="buy")
-    buy_bb_ltf_stddev = DecimalParameter(1.5, 3.0, default=2.0, space="buy")
+    buy_rsi_ltf_threshold = IntParameter(20, 50, default=30, space="buy")
 
     # Exit Parameters
-    sell_rsi_ltf_threshold = IntParameter(50, 80, default=70, space="sell")
-
+    sell_cmo_ltf_threshold = IntParameter(0, 50, default=25, space="sell")
 
     def informative_pairs(self):
         pairs = self.dp.current_whitelist()
@@ -89,24 +83,17 @@ class MT_ERMB_1(IStrategy):
         informative['ema_htf'] = ta.EMA(informative, timeperiod=self.buy_ema_htf_period.value)
         dataframe = merge_informative_pair(dataframe, informative, self.timeframe, self.informative_timeframe, ffill=True)
 
-
         # Lower Timeframe Indicators
+        dataframe['cmo_ltf'] = ftt.cmo(dataframe, period=self.buy_cmo_ltf_period.value)
         dataframe['rsi_ltf'] = ta.RSI(dataframe, timeperiod=self.buy_rsi_ltf_period.value)
-        macd = ta.MACD(dataframe, fastperiod=self.buy_macd_ltf_fast.value, slowperiod=self.buy_macd_ltf_slow.value, signalperiod=self.buy_macd_ltf_signal.value)
-        dataframe['macd_ltf'] = macd['macd']
-        dataframe['macdsignal_ltf'] = macd['macdsignal']
-        bb = ta.BBANDS(dataframe, timeperiod=self.buy_bb_ltf_period.value, nbdevup=self.buy_bb_ltf_stddev.value, nbdevdn=self.buy_bb_ltf_stddev.value)
-        dataframe['bb_lower_ltf'] = bb['lowerband']
-        dataframe['bb_upper_ltf'] = bb['upperband']
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
             (dataframe['close'] > dataframe[f'ema_htf_{self.informative_timeframe}']) &
-            (dataframe['rsi_ltf'] < self.buy_rsi_ltf_threshold.value) &
-            (dataframe['macd_ltf'] > dataframe['macdsignal_ltf']) &
-            (dataframe['close'] < dataframe['bb_lower_ltf']),
+            (dataframe['cmo_ltf'] < self.buy_cmo_ltf_threshold.value) &
+            (dataframe['rsi_ltf'] < self.buy_rsi_ltf_threshold.value),
             'enter_long'
         ] = 1
 
@@ -114,7 +101,7 @@ class MT_ERMB_1(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
-            (dataframe['rsi_ltf'] > self.sell_rsi_ltf_threshold.value),
+            (dataframe['cmo_ltf'] > self.sell_cmo_ltf_threshold.value),
             'exit_long'
         ] = 1
 
