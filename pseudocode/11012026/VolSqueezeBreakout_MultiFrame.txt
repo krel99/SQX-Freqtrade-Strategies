@@ -1,0 +1,37 @@
+Strategy: VolSqueezeBreakout_MultiFrame
+Timeframes: 5m (base), 1h (secondary)
+
+Objective: Identify a volatility squeeze on a higher timeframe (1h) and enter a breakout trade on a lower timeframe (5m) when momentum indicators align.
+
+Indicators (1h):
+- Bollinger Bands (period_bb_1h, stddev_bb_1h)
+- Keltner Channels (ema_period_kc_1h, atr_period_kc_1h, mult_kc_1h)
+- Ichimoku Cloud (senkou_span_b_period_1h, tenkan_sen_period_1h, kijun_sen_period_1h)
+
+Indicators (5m):
+- Bollinger Bands (period_bb_5m, stddev_bb_5m)
+- RSI (period_rsi_5m)
+- MACD (fast_macd_5m, slow_macd_5m, signal_macd_5m)
+- ADX (period_adx_5m)
+- Volume MA (period_volume_ma_5m)
+
+Entry Conditions (Long):
+1.  **1h Volatility Squeeze**:
+    - The 1h Bollinger Bands are inside the 1h Keltner Channels.
+    - Price is above the 1h Ichimoku Cloud (Senkou Span A and B).
+2.  **5m Breakout**:
+    - The volatility squeeze on the 1h timeframe has recently ended (e.g., within the last 3-5 candles).
+    - Price on the 5m timeframe breaks above the upper Bollinger Band.
+3.  **5m Momentum Confirmation**:
+    - RSI_5m > rsi_threshold_5m
+    - MACD_5m > MACD_signal_5m
+    - ADX_5m > adx_threshold_5m
+    - Volume_5m > Volume_MA_5m * volume_spike_factor_5m
+
+Exit Conditions (Long):
+1.  **Overbought Signal**:
+    - RSI_5m > rsi_exit_threshold_5m
+2.  **Price falls below 5m Bollinger Band middle line**:
+    - `close` < `bb_middleband_5m`
+3.  **Trailing Stop Loss**:
+    - A trailing stop loss is triggered if the price moves against the trade.

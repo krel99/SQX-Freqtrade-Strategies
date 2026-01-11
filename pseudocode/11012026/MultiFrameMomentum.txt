@@ -1,0 +1,33 @@
+Strategy: MultiFrameMomentum
+Timeframes: 15m (base), 1h (secondary)
+
+Objective: Enter trades when momentum indicators on both timeframes align, and exit on overbought signals or a trailing stop loss.
+
+Indicators (15m):
+- RSI (period_15m)
+- MACD (fast_15m, slow_15m, signal_15m)
+- Bollinger Bands (period_bb_15m, stddev_bb_15m)
+- Awesome Oscillator (ao_15m)
+
+Indicators (1h):
+- RSI (period_1h)
+- MACD (fast_1h, slow_1h, signal_1h)
+- Bollinger Bands (period_bb_1h, stddev_bb_1h)
+
+Entry Conditions (Long):
+1.  **1h Momentum**:
+    - RSI_1h > rsi_threshold_1h
+    - MACD_1h > MACD_signal_1h
+    - Price is above the middle Bollinger Band on the 1h timeframe.
+2.  **15m Momentum**:
+    - RSI_15m > rsi_threshold_15m
+    - MACD_15m > MACD_signal_15m
+    - Awesome Oscillator > 0
+3.  **15m Entry Trigger**:
+    - Price crosses above the upper Bollinger Band on the 15m timeframe.
+
+Exit Conditions (Long):
+1.  **Overbought Signal**:
+    - RSI_15m > rsi_exit_threshold_15m
+2.  **Trailing Stop Loss**:
+    - A trailing stop loss is triggered if the price moves against the trade.
