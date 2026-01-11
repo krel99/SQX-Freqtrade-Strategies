@@ -45,23 +45,7 @@
       "enableRateLimit": true,
       "rateLimit": 200
     },
-    "pair_whitelist": [
-      "BTC/USDT:USDT",
-      "ETH/USDT:USDT",
-      "BNB/USDT:USDT",
-      "XRP/USDT:USDT",
-      "ADA/USDT:USDT",
-      "LTC/USDT:USDT",
-      "TRX/USDT:USDT",
-      "ETC/USDT:USDT",
-      "EOS/USDT:USDT",
-      "DOT/USDT:USDT",
-      "LINK/USDT:USDT",
-      "UNI/USDT:USDT",
-      "FIL/USDT:USDT",
-      "AAVE/USDT:USDT",
-      "DOGE/USDT:USDT"
-    ],
+    "pair_whitelist": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
     "pair_blacklist": []
   },
   "pairlists": [
@@ -99,18 +83,15 @@
     "username": "freqtrader",
     "password": "freqtrader"
   },
-  "bot_name": "freqtrade_futures_2021_mtf",
+  "bot_name": "freqtrade_futures",
   "initial_state": "stopped",
   "force_entry_enable": false,
   "internals": {
     "process_throttle_secs": 5
   },
-  "strategy": "Strategy10012026_2",
-  "strategy_path": "user_data/strategies/10012026/",
   "datadir": "user_data/data",
   "user_data_dir": "user_data",
   "timeframe": "15m",
-  "informative_timeframe": "1h",
   "dataformat_ohlcv": "json",
   "dataformat_trades": "jsongz"
 }

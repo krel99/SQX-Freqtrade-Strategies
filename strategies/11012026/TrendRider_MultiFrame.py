@@ -20,7 +20,6 @@ from freqtrade.strategy import (
 from datetime import datetime
 from freqtrade.persistence import Trade
 import talib.abstract as ta
-from technical.indicators import vortex
 
 
 class TrendRider_MultiFrame(IStrategy):
@@ -91,13 +90,34 @@ class TrendRider_MultiFrame(IStrategy):
     sell_ema_15m_fast_period = IntParameter(5, 20, default=10, space="sell")
     sell_ema_15m_slow_period = IntParameter(10, 50, default=20, space="sell")
 
-
     def informative_pairs(self):
-        pairs = self.config['exchange']['pair_whitelist']
+        pairs = self.config["exchange"]["pair_whitelist"]
         informative_pairs = []
         for pair in pairs:
             informative_pairs.append((pair, self.info_timeframe))
         return informative_pairs
+
+    def vortex(self, dataframe: DataFrame, period: int) -> dict:
+        """
+        Calculate Vortex Indicator
+        Returns dict with 'vi_plus' and 'vi_minus' keys
+        """
+        df = dataframe.copy()
+
+        # Calculate VM+ and VM-
+        df["vm_plus"] = abs(df["high"] - df["low"].shift(1))
+        df["vm_minus"] = abs(df["low"] - df["high"].shift(1))
+
+        # Calculate True Range
+        df["tr"] = ta.TRANGE(df)
+
+        # Calculate VI+ and VI-
+        vi_plus = df["vm_plus"].rolling(window=period).sum() / df["tr"].rolling(window=period).sum()
+        vi_minus = (
+            df["vm_minus"].rolling(window=period).sum() / df["tr"].rolling(window=period).sum()
+        )
+
+        return {"vi_plus": vi_plus, "vi_minus": vi_minus}
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # -- Indicators for 4h timeframe --
@@ -112,7 +132,7 @@ class TrendRider_MultiFrame(IStrategy):
             acceleration=self.buy_psar_4h_acceleration.value,
             maximum=self.buy_psar_4h_maximum.value,
         )
-        vortex_4h = vortex(informative, period=self.buy_vortex_4h_period.value)
+        vortex_4h = self.vortex(informative, period=self.buy_vortex_4h_period.value)
         informative["vortex_plus"] = vortex_4h["vi_plus"]
         informative["vortex_minus"] = vortex_4h["vi_minus"]
         informative["adx"] = ta.ADX(informative, timeperiod=self.buy_adx_4h_period.value)
@@ -123,7 +143,8 @@ class TrendRider_MultiFrame(IStrategy):
             self.timeframe,
             self.info_timeframe,
             ffill=True,
-            suffix=f"_{self.info_timeframe}",
+            append_timeframe=False,
+            suffix=self.info_timeframe,
         )
 
         # -- Indicators for 15m timeframe --
@@ -142,17 +163,27 @@ class TrendRider_MultiFrame(IStrategy):
         dataframe["willr"] = ta.WILLR(dataframe, timeperiod=self.buy_willr_15m_period.value)
 
         # -- Exit Indicators --
-        dataframe["sell_ema_fast"] = ta.EMA(dataframe, timeperiod=self.sell_ema_15m_fast_period.value)
-        dataframe["sell_ema_slow"] = ta.EMA(dataframe, timeperiod=self.sell_ema_15m_slow_period.value)
+        dataframe["sell_ema_fast"] = ta.EMA(
+            dataframe, timeperiod=self.sell_ema_15m_fast_period.value
+        )
+        dataframe["sell_ema_slow"] = ta.EMA(
+            dataframe, timeperiod=self.sell_ema_15m_slow_period.value
+        )
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # -- 4h Uptrend Confirmation --
         uptrend_4h = (
-            (dataframe[f"ema_fast_{self.info_timeframe}"] > dataframe[f"ema_slow_{self.info_timeframe}"])
+            (
+                dataframe[f"ema_fast_{self.info_timeframe}"]
+                > dataframe[f"ema_slow_{self.info_timeframe}"]
+            )
             & (dataframe[f"close_{self.info_timeframe}"] > dataframe[f"psar_{self.info_timeframe}"])
-            & (dataframe[f"vortex_plus_{self.info_timeframe}"] > dataframe[f"vortex_minus_{self.info_timeframe}"])
+            & (
+                dataframe[f"vortex_plus_{self.info_timeframe}"]
+                > dataframe[f"vortex_minus_{self.info_timeframe}"]
+            )
             & (dataframe[f"adx_{self.info_timeframe}"] > self.buy_adx_4h_threshold.value)
         )
 

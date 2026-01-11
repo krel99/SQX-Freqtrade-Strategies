@@ -90,9 +90,8 @@ class MeanReversion_MultiFrame(IStrategy):
     # -- Exit Parameters --
     sell_rsi_5m_threshold = IntParameter(60, 90, default=70, space="sell")
 
-
     def informative_pairs(self):
-        pairs = self.config['exchange']['pair_whitelist']
+        pairs = self.config["exchange"]["pair_whitelist"]
         informative_pairs = []
         for pair in pairs:
             informative_pairs.append((pair, self.info_timeframe))
@@ -123,7 +122,8 @@ class MeanReversion_MultiFrame(IStrategy):
             self.timeframe,
             self.info_timeframe,
             ffill=True,
-            suffix=f"_{self.info_timeframe}",
+            append_timeframe=False,
+            suffix=self.info_timeframe,
         )
 
         # -- Indicators for 5m timeframe --
@@ -152,7 +152,10 @@ class MeanReversion_MultiFrame(IStrategy):
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # -- 1h Oversold Condition --
         oversold_1h = (
-            (dataframe[f"close_{self.info_timeframe}"] < dataframe[f"kc_lower_{self.info_timeframe}"])
+            (
+                dataframe[f"close_{self.info_timeframe}"]
+                < dataframe[f"kc_lower_{self.info_timeframe}"]
+            )
             & (dataframe[f"fastk_{self.info_timeframe}"] < self.buy_stochrsi_1h_threshold.value)
             & (dataframe[f"willr_{self.info_timeframe}"] < self.buy_willr_1h_threshold.value)
         )

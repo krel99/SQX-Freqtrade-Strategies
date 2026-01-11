@@ -2,6 +2,9 @@
 # flake8: noqa: F401
 # isort: skip_file
 # --- Do not remove these imports ---
+#
+#
+# HAS ERRORS
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
@@ -94,9 +97,8 @@ class VolSqueezeBreakout_MultiFrame(IStrategy):
     # -- Exit Parameters --
     sell_rsi_5m_threshold = IntParameter(60, 90, default=75, space="sell")
 
-
     def informative_pairs(self):
-        pairs = self.config['exchange']['pair_whitelist']
+        pairs = self.config["exchange"]["pair_whitelist"]
         informative_pairs = []
         for pair in pairs:
             informative_pairs.append((pair, self.info_timeframe))
@@ -122,17 +124,16 @@ class VolSqueezeBreakout_MultiFrame(IStrategy):
         informative["kc_lower"] = kc_1h_ema - kc_1h_atr * self.buy_kc_1h_mult.value
         informative["kc_upper"] = kc_1h_ema + kc_1h_atr * self.buy_kc_1h_mult.value
 
-        informative["squeeze_on"] = (
-            (informative["bb_lower"] > informative["kc_lower"])
-            & (informative["bb_upper"] < informative["kc_upper"])
+        informative["squeeze_on"] = (informative["bb_lower"] > informative["kc_lower"]) & (
+            informative["bb_upper"] < informative["kc_upper"]
         )
 
         ichi = ichimoku(
             informative,
             conversion_line_period=self.buy_ichi_1h_tenkan.value,
             base_line_periods=self.buy_ichi_1h_kijun.value,
-            lagging_span_period=self.buy_ichi_1h_senkou.value,
-            displacement=26, # Standard displacement
+            laggin_span=self.buy_ichi_1h_senkou.value,
+            displacement=26,  # Standard displacement
         )
         informative["senkou_a"] = ichi["senkou_a"]
         informative["senkou_b"] = ichi["senkou_b"]
@@ -143,7 +144,8 @@ class VolSqueezeBreakout_MultiFrame(IStrategy):
             self.timeframe,
             self.info_timeframe,
             ffill=True,
-            suffix=f"_{self.info_timeframe}",
+            append_timeframe=False,
+            suffix=self.info_timeframe,
         )
 
         # -- Indicators for 5m timeframe --
@@ -176,7 +178,9 @@ class VolSqueezeBreakout_MultiFrame(IStrategy):
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # -- 1h Squeeze and Trend Conditions --
         squeeze_1h = (
-            dataframe[f"squeeze_on_{self.info_timeframe}"].rolling(self.buy_squeeze_1h_lookback.value).sum()
+            dataframe[f"squeeze_on_{self.info_timeframe}"]
+            .rolling(self.buy_squeeze_1h_lookback.value)
+            .sum()
             == self.buy_squeeze_1h_lookback.value
         )
         above_cloud_1h = (
@@ -198,8 +202,8 @@ class VolSqueezeBreakout_MultiFrame(IStrategy):
 
         # -- Combine Conditions --
         dataframe.loc[
-            squeeze_1h.shift(1) # Squeeze was on in the previous 1h candle
-            & ~dataframe[f"squeeze_on_{self.info_timeframe}"] # Squeeze is now off
+            squeeze_1h.shift(1)  # Squeeze was on in the previous 1h candle
+            & ~dataframe[f"squeeze_on_{self.info_timeframe}"]  # Squeeze is now off
             & above_cloud_1h
             & breakout_5m
             & confirmation_5m,

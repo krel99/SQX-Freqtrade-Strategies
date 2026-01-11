@@ -2,6 +2,9 @@
 # flake8: noqa: F401
 # isort: skip_file
 # --- Do not remove these imports ---
+#
+#
+# HAS ERRORS
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
@@ -87,13 +90,11 @@ class DynamicVolatility_MultiFrame(IStrategy):
     buy_cmo_15m_period = IntParameter(10, 50, default=14, space="buy")
     buy_cmo_15m_threshold = IntParameter(0, 50, default=20, space="buy")
 
-
     # -- Exit Parameters --
     sell_rsi_15m_threshold = IntParameter(65, 95, default=80, space="sell")
 
-
     def informative_pairs(self):
-        pairs = self.config['exchange']['pair_whitelist']
+        pairs = self.config["exchange"]["pair_whitelist"]
         informative_pairs = []
         for pair in pairs:
             informative_pairs.append((pair, self.info_timeframe))
@@ -106,7 +107,9 @@ class DynamicVolatility_MultiFrame(IStrategy):
         )
 
         informative["atr"] = ta.ATR(informative, timeperiod=self.buy_atr_4h_period.value)
-        informative["atr_ma"] = ta.SMA(informative["atr"], timeperiod=self.buy_atr_4h_ma_period.value)
+        informative["atr_ma"] = ta.SMA(
+            informative["atr"], timeperiod=self.buy_atr_4h_ma_period.value
+        )
 
         bb_4h = ta.BBANDS(
             informative,
@@ -123,7 +126,8 @@ class DynamicVolatility_MultiFrame(IStrategy):
             self.timeframe,
             self.info_timeframe,
             ffill=True,
-            suffix=f"_{self.info_timeframe}",
+            append_timeframe=False,
+            suffix=self.info_timeframe,
         )
 
         # -- Indicators for 15m timeframe --

@@ -71,14 +71,17 @@ class VolatilityCatcher(IStrategy):
     buy_stoch_15m_fastk = IntParameter(5, 20, default=14, space="buy")
     buy_stoch_15m_slowk = IntParameter(3, 10, default=3, space="buy")
     buy_stoch_15m_slowd = IntParameter(3, 10, default=3, space="buy")
-    buy_ao_15m_threshold = DecimalParameter(0.0, 1.0, default=0.0, space="buy") # Awesome Oscillator threshold
+    buy_ao_15m_threshold = DecimalParameter(
+        0.0, 1.0, default=0.0, space="buy"
+    )  # Awesome Oscillator threshold
 
     # -- Exit Parameters --
     sell_stoch_15m_threshold = IntParameter(60, 90, default=75, space="sell")
 
-
     def informative_pairs(self):
-        pairs = self.dp.get_pair_dataframe(self.timeframe, self.config['exchange']['pair_whitelist'])
+        pairs = self.dp.get_pair_dataframe(
+            self.timeframe, self.config["exchange"]["pair_whitelist"]
+        )
         informative_pairs = []
         for pair in pairs:
             informative_pairs.append((pair, self.info_timeframe))
@@ -97,7 +100,6 @@ class VolatilityCatcher(IStrategy):
             self.timeframe,
             self.info_timeframe,
             ffill=True,
-            suffix=f"_{self.info_timeframe}",
         )
 
         # -- Indicators for 15m timeframe --
@@ -110,14 +112,14 @@ class VolatilityCatcher(IStrategy):
         )
         dataframe["slowk"] = stoch["slowk"]
         dataframe["slowd"] = stoch["slowd"]
-        dataframe["ao"] = ta.APO(dataframe, fastperiod=5, slowperiod=34) # Awesome Oscillator
+        dataframe["ao"] = ta.APO(dataframe, fastperiod=5, slowperiod=34)  # Awesome Oscillator
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # -- 1h Momentum Conditions --
         momentum_1h = (
-            (dataframe[f"close_{self.info_timeframe}"] > dataframe[f"ema_slow_{self.info_timeframe}"])
+            dataframe[f"close_{self.info_timeframe}"] > dataframe[f"ema_slow_{self.info_timeframe}"]
         )
 
         # -- 15m Volatility Conditions --

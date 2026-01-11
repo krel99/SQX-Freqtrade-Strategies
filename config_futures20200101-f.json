@@ -45,23 +45,7 @@
       "enableRateLimit": true,
       "rateLimit": 200
     },
-    "pair_whitelist": [
-      "BTC/USDT:USDT",
-      "ETH/USDT:USDT",
-      "BNB/USDT:USDT",
-      "XRP/USDT:USDT",
-      "ADA/USDT:USDT",
-      "LTC/USDT:USDT",
-      "TRX/USDT:USDT",
-      "ETC/USDT:USDT",
-      "EOS/USDT:USDT",
-      "DOT/USDT:USDT",
-      "LINK/USDT:USDT",
-      "UNI/USDT:USDT",
-      "FIL/USDT:USDT",
-      "AAVE/USDT:USDT",
-      "DOGE/USDT:USDT"
-    ],
+    "pair_whitelist": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
     "pair_blacklist": []
   },
   "pairlists": [
@@ -105,11 +89,10 @@
   "internals": {
     "process_throttle_secs": 5
   },
-  "strategy": "BollingerSquigKrumpa",
-  "strategy_path": "user_data/strategies/04012026/",
   "datadir": "user_data/data",
   "user_data_dir": "user_data",
   "timeframe": "15m",
-  "dataformat_ohlcv": "json",
-  "dataformat_trades": "jsongz"
+  "dataformat_ohlcv": "feather",
+  "dataformat_trades": "jsongz",
+  "startup_candle_count": 200
 }

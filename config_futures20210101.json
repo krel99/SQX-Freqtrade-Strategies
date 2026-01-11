@@ -49,12 +49,8 @@
       "BTC/USDT:USDT",
       "ETH/USDT:USDT",
       "BNB/USDT:USDT",
-      "XRP/USDT:USDT",
-      "ADA/USDT:USDT",
-      "LTC/USDT:USDT",
-      "TRX/USDT:USDT",
       "ETC/USDT:USDT",
-      "EOS/USDT:USDT"
+      "ADA/USDT:USDT"
     ],
     "pair_blacklist": []
   },
@@ -99,8 +95,6 @@
   "internals": {
     "process_throttle_secs": 5
   },
-  "strategy": "BollingerSquigKrumpa",
-  "strategy_path": "user_data/strategies/04012026/",
   "datadir": "user_data/data",
   "user_data_dir": "user_data",
   "timeframe": "15m",

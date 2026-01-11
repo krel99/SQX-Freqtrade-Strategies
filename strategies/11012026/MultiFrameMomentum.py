@@ -2,6 +2,7 @@
 # flake8: noqa: F401
 # isort: skip_file
 # --- Do not remove these imports ---
+# decent results but inconsistent between backtest and hyperopt
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
@@ -80,7 +81,9 @@ class MultiFrameMomentum(IStrategy):
     buy_macd_15m_signal = IntParameter(5, 18, default=9, space="buy")
     buy_bb_15m_period = IntParameter(10, 50, default=20, space="buy")
     buy_bb_15m_stddev = DecimalParameter(1.5, 3.0, default=2.0, space="buy")
-    buy_ao_15m_threshold = DecimalParameter(0.0, 1.0, default=0.0, space="buy") # Awesome Oscillator threshold
+    buy_ao_15m_threshold = DecimalParameter(
+        0.0, 1.0, default=0.0, space="buy"
+    )  # Awesome Oscillator threshold
     buy_adx_15m_period = IntParameter(10, 50, default=14, space="buy")
     buy_adx_15m_threshold = IntParameter(15, 50, default=25, space="buy")
     buy_stoch_15m_fastk = IntParameter(5, 20, default=14, space="buy")
@@ -91,9 +94,8 @@ class MultiFrameMomentum(IStrategy):
     # -- Exit Parameters --
     sell_rsi_15m_threshold = IntParameter(60, 90, default=75, space="sell")
 
-
     def informative_pairs(self):
-        pairs = self.config['exchange']['pair_whitelist']
+        pairs = self.config["exchange"]["pair_whitelist"]
         informative_pairs = []
         for pair in pairs:
             informative_pairs.append((pair, self.info_timeframe))
@@ -129,7 +131,8 @@ class MultiFrameMomentum(IStrategy):
             self.timeframe,
             self.info_timeframe,
             ffill=True,
-            suffix=f"_{self.info_timeframe}",
+            append_timeframe=False,
+            suffix=self.info_timeframe,
         )
 
         # -- Indicators for 15m timeframe --
@@ -149,7 +152,7 @@ class MultiFrameMomentum(IStrategy):
             nbdevdn=self.buy_bb_15m_stddev.value,
         )
         dataframe["bb_upper"] = bb_15m["upperband"]
-        dataframe["ao"] = ta.APO(dataframe, fastperiod=5, slowperiod=34) # Awesome Oscillator
+        dataframe["ao"] = ta.APO(dataframe, fastperiod=5, slowperiod=34)  # Awesome Oscillator
         dataframe["adx"] = ta.ADX(dataframe, timeperiod=self.buy_adx_15m_period.value)
         stoch = ta.STOCH(
             dataframe,
@@ -159,7 +162,9 @@ class MultiFrameMomentum(IStrategy):
         )
         dataframe["slowk"] = stoch["slowk"]
         dataframe["slowd"] = stoch["slowd"]
-        dataframe["volume_ma"] = ta.SMA(dataframe["volume"], timeperiod=self.buy_volume_ma_15m_period.value)
+        dataframe["volume_ma"] = ta.SMA(
+            dataframe["volume"], timeperiod=self.buy_volume_ma_15m_period.value
+        )
 
         return dataframe
 
@@ -167,9 +172,18 @@ class MultiFrameMomentum(IStrategy):
         # -- 1h Momentum Conditions --
         momentum_1h = (
             (dataframe[f"rsi_{self.info_timeframe}"] > self.buy_rsi_1h_threshold.value)
-            & (dataframe[f"macd_{self.info_timeframe}"] > dataframe[f"macdsignal_{self.info_timeframe}"])
-            & (dataframe[f"close_{self.info_timeframe}"] > dataframe[f"bb_middle_{self.info_timeframe}"])
-            & (dataframe[f"close_{self.info_timeframe}"] > dataframe[f"ema_slow_{self.info_timeframe}"])
+            & (
+                dataframe[f"macd_{self.info_timeframe}"]
+                > dataframe[f"macdsignal_{self.info_timeframe}"]
+            )
+            & (
+                dataframe[f"close_{self.info_timeframe}"]
+                > dataframe[f"bb_middle_{self.info_timeframe}"]
+            )
+            & (
+                dataframe[f"close_{self.info_timeframe}"]
+                > dataframe[f"ema_slow_{self.info_timeframe}"]
+            )
         )
 
         # -- 15m Momentum Conditions --
