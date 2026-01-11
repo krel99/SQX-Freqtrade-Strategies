@@ -55,7 +55,7 @@ class MT_ERMB_1(IStrategy):
     ignore_roi_if_entry_signal = True
 
     # Number of candles the strategy requires before producing valid signals
-    startup_candle_count: int = 100
+    startup_candle_count: int = 30
 
     # --- Hyperparameters ---
     # EMA (Higher Timeframe)
@@ -63,7 +63,7 @@ class MT_ERMB_1(IStrategy):
 
     # RSI (Lower Timeframe)
     buy_rsi_ltf_period = IntParameter(10, 50, default=14, space="buy")
-    buy_rsi_ltf_threshold = IntParameter(20, 50, default=45, space="buy")
+    buy_rsi_ltf_threshold = IntParameter(20, 50, default=30, space="buy")
 
     # MACD (Lower Timeframe)
     buy_macd_ltf_fast = IntParameter(6, 24, default=12, space="buy")

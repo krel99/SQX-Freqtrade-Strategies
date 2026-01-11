@@ -55,7 +55,7 @@ class MT_ESAK_1(IStrategy):
     ignore_roi_if_entry_signal = True
 
     # Number of candles the strategy requires before producing valid signals
-    startup_candle_count: int = 100
+    startup_candle_count: int = 30
 
     # --- Hyperparameters ---
     # EMA (Higher Timeframe)
@@ -64,7 +64,11 @@ class MT_ESAK_1(IStrategy):
     # Stochastic Oscillator (Lower Timeframe)
     buy_stoch_ltf_k = IntParameter(5, 20, default=14, space="buy")
     buy_stoch_ltf_d = IntParameter(3, 10, default=3, space="buy")
-    buy_stoch_ltf_threshold = IntParameter(10, 40, default=30, space="buy")
+    buy_stoch_ltf_threshold = IntParameter(10, 40, default=20, space="buy")
+
+    # ADX (Lower Timeframe)
+    buy_adx_ltf_period = IntParameter(10, 50, default=14, space="buy")
+    buy_adx_ltf_threshold = IntParameter(15, 50, default=25, space="buy")
 
     # Keltner Channels (Lower Timeframe)
     buy_kc_ltf_ema_period = IntParameter(10, 50, default=20, space="buy")
@@ -90,6 +94,7 @@ class MT_ESAK_1(IStrategy):
         stoch = ta.STOCH(dataframe, fastk_period=self.buy_stoch_ltf_k.value, slowk_period=self.buy_stoch_ltf_d.value, slowd_period=self.buy_stoch_ltf_d.value)
         dataframe['slowk_ltf'] = stoch['slowk']
         dataframe['slowd_ltf'] = stoch['slowd']
+        dataframe['adx_ltf'] = ta.ADX(dataframe, timeperiod=self.buy_adx_ltf_period.value)
         kc_ema = ta.EMA(dataframe, timeperiod=self.buy_kc_ltf_ema_period.value)
         kc_atr = ta.ATR(dataframe, timeperiod=self.buy_kc_ltf_atr_period.value)
         dataframe['kc_lower_ltf'] = kc_ema - kc_atr * self.buy_kc_ltf_mult.value
@@ -101,6 +106,7 @@ class MT_ESAK_1(IStrategy):
         dataframe.loc[
             (dataframe['close'] > dataframe[f'ema_htf_{self.informative_timeframe}']) &
             (dataframe['slowk_ltf'] < self.buy_stoch_ltf_threshold.value) &
+            (dataframe['adx_ltf'] > self.buy_adx_ltf_threshold.value) &
             (dataframe['close'] < dataframe['kc_lower_ltf']),
             'enter_long'
         ] = 1
