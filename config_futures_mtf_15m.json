@@ -93,17 +93,18 @@
     "username": "freqtrader",
     "password": "freqtrader"
   },
-  "bot_name": "freqtrade_futures",
+  "bot_name": "freqtrade_futures_mtf",
   "initial_state": "stopped",
   "force_entry_enable": false,
   "internals": {
     "process_throttle_secs": 5
   },
-  "strategy": "BollingerSquigKrumpa",
-  "strategy_path": "user_data/strategies/04012026/",
+  "strategy": "Strategy10012026_2",
+  "strategy_path": "user_data/strategies/10012026/",
   "datadir": "user_data/data",
   "user_data_dir": "user_data",
   "timeframe": "15m",
+  "informative_timeframe": "1h",
   "dataformat_ohlcv": "json",
   "dataformat_trades": "jsongz"
 }

@@ -54,7 +54,22 @@
       "LTC/USDT:USDT",
       "TRX/USDT:USDT",
       "ETC/USDT:USDT",
-      "EOS/USDT:USDT"
+      "EOS/USDT:USDT",
+      "DOT/USDT:USDT",
+      "LINK/USDT:USDT",
+      "UNI/USDT:USDT",
+      "FIL/USDT:USDT",
+      "AAVE/USDT:USDT",
+      "DOGE/USDT:USDT",
+      "SOL/USDT:USDT",
+      "AVAX/USDT:USDT",
+      "MATIC/USDT:USDT",
+      "NEAR/USDT:USDT",
+      "SAND/USDT:USDT",
+      "APE/USDT:USDT",
+      "OP/USDT:USDT",
+      "AR/USDT:USDT",
+      "RUNE/USDT:USDT"
     ],
     "pair_blacklist": []
   },
@@ -93,17 +108,18 @@
     "username": "freqtrader",
     "password": "freqtrader"
   },
-  "bot_name": "freqtrade_futures",
+  "bot_name": "freqtrade_futures_2022_mtf",
   "initial_state": "stopped",
   "force_entry_enable": false,
   "internals": {
     "process_throttle_secs": 5
   },
-  "strategy": "BollingerSquigKrumpa",
-  "strategy_path": "user_data/strategies/04012026/",
+  "strategy": "Strategy10012026_2",
+  "strategy_path": "user_data/strategies/10012026/",
   "datadir": "user_data/data",
   "user_data_dir": "user_data",
   "timeframe": "15m",
+  "informative_timeframe": "1h",
   "dataformat_ohlcv": "json",
   "dataformat_trades": "jsongz"
 }

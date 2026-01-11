@@ -2,6 +2,7 @@
 # flake8: noqa: F401
 # isort: skip_file
 # --- Do not remove these imports ---
+# PROBLEM - TOO LITTLE TRADES
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
@@ -21,6 +22,7 @@ from datetime import datetime
 from freqtrade.persistence import Trade
 import talib.abstract as ta
 import freqtrade.vendor.qtpylib.indicators as qtpylib
+import pandas_ta
 
 
 class Strategy10012026_2(IStrategy):
@@ -32,8 +34,8 @@ class Strategy10012026_2(IStrategy):
     INTERFACE_VERSION = 3
 
     # Define timeframes
-    timeframe = '1h'
-    info_timeframe = '4h'
+    timeframe = "15m"
+    info_timeframe = "1h"
 
     # Can short
     can_short = False
@@ -64,7 +66,7 @@ class Strategy10012026_2(IStrategy):
     buy_stochrsi_period = IntParameter(5, 30, default=14, space="buy")
     buy_stochrsi_k_period = IntParameter(2, 10, default=3, space="buy")
     buy_stochrsi_d_period = IntParameter(2, 10, default=3, space="buy")
-    buy_stochrsi_oversold = DecimalParameter(0.1, 0.4, default=0.3, space="buy")
+    buy_stochrsi_oversold = DecimalParameter(0.1, 0.5, default=0.2, space="buy")
 
     # Awesome Oscillator (AO)
     buy_ao_fast = IntParameter(3, 10, default=5, space="buy")
@@ -72,20 +74,20 @@ class Strategy10012026_2(IStrategy):
 
     # Commodity Channel Index (CCI) 1
     buy_cci_period = IntParameter(10, 40, default=20, space="buy")
-    buy_cci_threshold = IntParameter(50, 150, default=100, space="buy")
+    buy_cci_threshold = IntParameter(-50, 100, default=0, space="buy")
 
     # Commodity Channel Index (CCI) 2
     buy_cci_period2 = IntParameter(20, 60, default=40, space="buy")
-    buy_cci_threshold2 = IntParameter(50, 150, default=100, space="buy")
+    buy_cci_threshold2 = IntParameter(-100, 50, default=-50, space="buy")
 
     # Chaikin Money Flow (CMF)
     buy_cmf_period = IntParameter(10, 40, default=20, space="buy")
-    buy_cmf_threshold = DecimalParameter(0.0, 0.3, default=0.05, space="buy")
+    buy_cmf_threshold = DecimalParameter(-0.1, 0.2, default=0.0, space="buy")
 
     # -- Confirmation Timeframe Parameters --
     # RSI
     inf_rsi_period = IntParameter(10, 30, default=14, space="buy")
-    inf_rsi_threshold = IntParameter(45, 65, default=55, space="buy")
+    inf_rsi_threshold = IntParameter(40, 60, default=50, space="buy")
 
     # MACD
     inf_macd_fast = IntParameter(6, 24, default=12, space="buy")
@@ -94,7 +96,7 @@ class Strategy10012026_2(IStrategy):
 
     # DMI (ADX)
     inf_dmi_period = IntParameter(10, 30, default=14, space="buy")
-    inf_adx_threshold = IntParameter(15, 40, default=20, space="buy")
+    inf_adx_threshold = IntParameter(15, 35, default=25, space="buy")
 
     # EMA
     inf_ema_fast_period = IntParameter(20, 80, default=50, space="buy")
@@ -104,34 +106,38 @@ class Strategy10012026_2(IStrategy):
     inf_willr_period = IntParameter(10, 50, default=20, space="buy")
     inf_willr_threshold = IntParameter(-40, -10, default=-20, space="buy")
 
-
     # -- Exit Parameters --
     sell_stochrsi_overbought = DecimalParameter(0.6, 0.9, default=0.7, space="sell")
     sell_cci_threshold = IntParameter(-150, -50, default=-100, space="sell")
     sell_atr_mult = DecimalParameter(1.0, 4.0, default=2.5, space="sell")
     sell_atr_period = IntParameter(10, 30, default=14, space="sell")
 
-    @informative('4h')
+    @informative("1h")
     def populate_indicators_4h(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # RSI
-        dataframe['rsi'] = ta.RSI(dataframe, timeperiod=self.inf_rsi_period.value)
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.inf_rsi_period.value)
 
         # MACD
-        macd = ta.MACD(dataframe, fastperiod=self.inf_macd_fast.value, slowperiod=self.inf_macd_slow.value, signalperiod=self.inf_macd_signal.value)
-        dataframe['macd'] = macd['macd']
-        dataframe['macdsignal'] = macd['macdsignal']
+        macd = ta.MACD(
+            dataframe,
+            fastperiod=self.inf_macd_fast.value,
+            slowperiod=self.inf_macd_slow.value,
+            signalperiod=self.inf_macd_signal.value,
+        )
+        dataframe["macd"] = macd["macd"]
+        dataframe["macdsignal"] = macd["macdsignal"]
 
         # DMI
-        dataframe['plus_di'] = ta.PLUS_DI(dataframe, timeperiod=self.inf_dmi_period.value)
-        dataframe['minus_di'] = ta.MINUS_DI(dataframe, timeperiod=self.inf_dmi_period.value)
-        dataframe['adx'] = ta.ADX(dataframe, timeperiod=self.inf_dmi_period.value)
+        dataframe["plus_di"] = ta.PLUS_DI(dataframe, timeperiod=self.inf_dmi_period.value)
+        dataframe["minus_di"] = ta.MINUS_DI(dataframe, timeperiod=self.inf_dmi_period.value)
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod=self.inf_dmi_period.value)
 
         # EMA
-        dataframe['ema_fast'] = ta.EMA(dataframe, timeperiod=self.inf_ema_fast_period.value)
-        dataframe['ema_slow'] = ta.EMA(dataframe, timeperiod=self.inf_ema_slow_period.value)
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod=self.inf_ema_fast_period.value)
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod=self.inf_ema_slow_period.value)
 
         # Williams %R
-        dataframe['willr'] = ta.WILLR(dataframe, timeperiod=self.inf_willr_period.value)
+        dataframe["willr"] = ta.WILLR(dataframe, timeperiod=self.inf_willr_period.value)
 
         return dataframe
 
@@ -139,62 +145,100 @@ class Strategy10012026_2(IStrategy):
         # -- Primary timeframe indicators --
         # StochRSI
         stoch_rsi = ta.STOCHRSI(dataframe, timeperiod=self.buy_stochrsi_period.value)
-        dataframe['stochrsi_k'] = stoch_rsi['fastk']
-        dataframe['stochrsi_d'] = stoch_rsi['fastd']
+        dataframe["stochrsi_k"] = stoch_rsi["fastk"]
+        dataframe["stochrsi_d"] = stoch_rsi["fastd"]
 
         # Awesome Oscillator
-        dataframe['ao'] = qtpylib.awesome_oscillator(dataframe, fast=self.buy_ao_fast.value, slow=self.buy_ao_slow.value)
+        dataframe["ao"] = qtpylib.awesome_oscillator(
+            dataframe, fast=self.buy_ao_fast.value, slow=self.buy_ao_slow.value
+        )
 
         # CCI 1 & 2
-        dataframe['cci'] = ta.CCI(dataframe, timeperiod=self.buy_cci_period.value)
-        dataframe['cci2'] = ta.CCI(dataframe, timeperiod=self.buy_cci_period2.value)
+        dataframe["cci"] = ta.CCI(dataframe, timeperiod=self.buy_cci_period.value)
+        dataframe["cci2"] = ta.CCI(dataframe, timeperiod=self.buy_cci_period2.value)
 
         # CMF
-        dataframe['cmf'] = qtpylib.chaikin_money_flow(dataframe, period=self.buy_cmf_period.value)
+        dataframe["cmf"] = pandas_ta.cmf(
+            high=dataframe["high"],
+            low=dataframe["low"],
+            close=dataframe["close"],
+            volume=dataframe["volume"],
+            length=self.buy_cmf_period.value,
+        )
 
         # ATR for exits
-        dataframe['atr'] = ta.ATR(dataframe, timeperiod=self.sell_atr_period.value)
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.sell_atr_period.value)
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Higher timeframe confirmation - require at least 3 out of 6 conditions
+        htf_rsi = dataframe[f"rsi_{self.info_timeframe}"] > self.inf_rsi_threshold.value
+        htf_macd = (
+            dataframe[f"macd_{self.info_timeframe}"]
+            > dataframe[f"macdsignal_{self.info_timeframe}"]
+        )
+        htf_dmi = (
+            dataframe[f"plus_di_{self.info_timeframe}"]
+            > dataframe[f"minus_di_{self.info_timeframe}"]
+        )
+        htf_adx = dataframe[f"adx_{self.info_timeframe}"] > self.inf_adx_threshold.value
+        htf_ema = (
+            dataframe[f"ema_fast_{self.info_timeframe}"]
+            > dataframe[f"ema_slow_{self.info_timeframe}"]
+        )
+        htf_willr = dataframe[f"willr_{self.info_timeframe}"] > self.inf_willr_threshold.value
 
-        # Higher timeframe confirmation
-        confirm_trend = (
-            (dataframe[f'rsi_{self.info_timeframe}'] > self.inf_rsi_threshold.value) &
-            (dataframe[f'macd_{self.info_timeframe}'] > dataframe[f'macdsignal_{self.info_timeframe}']) &
-            (dataframe[f'plus_di_{self.info_timeframe}'] > dataframe[f'minus_di_{self.info_timeframe}']) &
-            (dataframe[f'adx_{self.info_timeframe}'] > self.inf_adx_threshold.value) &
-            (dataframe[f'ema_fast_{self.info_timeframe}'] > dataframe[f'ema_slow_{self.info_timeframe}']) &
-            (dataframe[f'willr_{self.info_timeframe}'] > self.inf_willr_threshold.value)
+        # Count true conditions
+        htf_score = (
+            htf_rsi.astype(int)
+            + htf_macd.astype(int)
+            + htf_dmi.astype(int)
+            + htf_adx.astype(int)
+            + htf_ema.astype(int)
+            + htf_willr.astype(int)
+        )
+        confirm_trend = htf_score >= 3
+
+        # StochRSI signal - either oversold bounce or momentum cross
+        stoch_signal = (
+            # Oversold bounce
+            (dataframe["stochrsi_k"] < self.buy_stochrsi_oversold.value)
+            & (qtpylib.crossed_above(dataframe["stochrsi_k"], dataframe["stochrsi_d"]))
+        ) | (
+            # Momentum cross in mid-range
+            (dataframe["stochrsi_k"] > self.buy_stochrsi_oversold.value)
+            & (dataframe["stochrsi_k"] < 0.7)
+            & (qtpylib.crossed_above(dataframe["stochrsi_k"], dataframe["stochrsi_d"]))
         )
 
-        # Primary timeframe entry signal
-        entry_signal = (
-            (qtpylib.crossed_above(dataframe['stochrsi_k'], dataframe['stochrsi_d'])) &
-            (dataframe['stochrsi_k'] < self.buy_stochrsi_oversold.value) &
-            (dataframe['ao'] > 0) &
-            (dataframe['cci'] > self.buy_cci_threshold.value) &
-            (dataframe['cci2'] > self.buy_cci_threshold2.value) &
-            (dataframe['cmf'] > self.buy_cmf_threshold.value)
+        # CCI signals - at least one should be favorable
+        cci_signal = (dataframe["cci"] > self.buy_cci_threshold.value) | (
+            dataframe["cci2"] > self.buy_cci_threshold2.value
         )
 
-        dataframe.loc[confirm_trend & entry_signal, 'enter_long'] = 1
+        # Core momentum conditions
+        momentum_conditions = (
+            stoch_signal
+            & (dataframe["ao"] > 0)
+            & cci_signal
+            & (dataframe["cmf"] > self.buy_cmf_threshold.value)
+        )
+
+        dataframe.loc[confirm_trend & momentum_conditions, "enter_long"] = 1
 
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-
         # Exit conditions based on primary timeframe
-        stoch_exit = (
-            (qtpylib.crossed_below(dataframe['stochrsi_k'], dataframe['stochrsi_d'])) &
-            (dataframe['stochrsi_k'] > self.sell_stochrsi_overbought.value)
+        stoch_exit = (qtpylib.crossed_below(dataframe["stochrsi_k"], dataframe["stochrsi_d"])) & (
+            dataframe["stochrsi_k"] > self.sell_stochrsi_overbought.value
         )
 
-        ao_exit = dataframe['ao'] < 0
+        ao_exit = dataframe["ao"] < 0
 
-        cci_exit = dataframe['cci'] < self.sell_cci_threshold.value
+        cci_exit = dataframe["cci"] < self.sell_cci_threshold.value
 
-        dataframe.loc[stoch_exit | ao_exit | cci_exit, 'exit_long'] = 1
+        dataframe.loc[stoch_exit | ao_exit | cci_exit, "exit_long"] = 1
 
         return dataframe

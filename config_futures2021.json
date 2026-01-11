@@ -54,7 +54,13 @@
       "LTC/USDT:USDT",
       "TRX/USDT:USDT",
       "ETC/USDT:USDT",
-      "EOS/USDT:USDT"
+      "EOS/USDT:USDT",
+      "DOT/USDT:USDT",
+      "LINK/USDT:USDT",
+      "UNI/USDT:USDT",
+      "FIL/USDT:USDT",
+      "AAVE/USDT:USDT",
+      "DOGE/USDT:USDT"
     ],
     "pair_blacklist": []
   },
