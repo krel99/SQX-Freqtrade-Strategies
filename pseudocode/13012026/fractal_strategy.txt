@@ -1,0 +1,39 @@
+Strategy: Fractal Corridor Breakout
+
+This strategy identifies trading opportunities by detecting breakouts from corridors formed by price fractals. It uses a long-period moving average as a trend filter to ensure entries are aligned with the dominant market direction.
+
+Parameters:
+- Fractal Window: The number of candles used to identify a fractal (e.g., 3 or 5).
+- Breakout Threshold: A percentage value added to/subtracted from the fractal corridor to confirm a breakout.
+- MA Length: The lookback period for the long-period moving average.
+- Take Profit Multiplier: A factor used to determine the take-profit level based on the corridor width (e.g., 4x).
+
+Indicators:
+1. Long-Period Moving Average (e.g., EMA): Establishes the overall trend.
+2. Fractal Tops (Resistance): Identified when a candle's high is greater than the highs of its neighboring candles.
+3. Fractal Bottoms (Support): Identified when a candle's low is lower than the lows of its neighboring candles.
+
+Entry Logic (Long):
+1. Trend Confirmation: The current price is trading above the long-period moving average.
+2. Breakout Signal: The price closes above the last fractal top, plus the breakout threshold.
+   - `close > (Last Fractal Top * (1 + Breakout Threshold))`
+
+Exit Logic (Long):
+1. Take Profit: The price reaches the entry price plus the corridor width multiplied by the take-profit factor.
+   - `Take Profit = Entry Price + ((Last Fractal Top - Last Fractal Bottom) * Take Profit Multiplier)`
+2. Stop-Loss: The price closes below the last fractal bottom.
+
+Entry Logic (Short):
+1. Trend Confirmation: The current price is trading below the long-period moving average.
+2. Breakout Signal: The price closes below the last fractal bottom, minus the breakout threshold.
+   - `close < (Last Fractal Bottom * (1 - Breakout Threshold))`
+
+Exit Logic (Short):
+1. Take Profit: The price reaches the entry price minus the corridor width multiplied by the take-profit factor.
+   - `Take Profit = Entry Price - ((Last Fractal Top - Last Fractal Bottom) * Take Profit Multiplier)`
+2. Stop-Loss: The price closes above the last fractal top.
+
+Execution:
+- The strategy continuously monitors price action, updating fractal levels as new ones form.
+- When entry conditions are met, a trade is opened in the direction of the trend.
+- The trade is closed when either the take-profit or stop-loss level is reached.
