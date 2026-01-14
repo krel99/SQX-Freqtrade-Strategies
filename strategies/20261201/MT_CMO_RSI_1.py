@@ -22,6 +22,7 @@ from freqtrade.persistence import Trade
 import talib.abstract as ta
 import technical.indicators as ftt
 
+
 class MT_CMO_RSI_1(IStrategy):
     """
     Multi-Timeframe Strategy with CMO and RSI
@@ -79,30 +80,31 @@ class MT_CMO_RSI_1(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # Higher Timeframe Indicators
-        informative = self.dp.get_pair_dataframe(pair=metadata['pair'], timeframe=self.informative_timeframe)
-        informative['ema_htf'] = ta.EMA(informative, timeperiod=self.buy_ema_htf_period.value)
-        dataframe = merge_informative_pair(dataframe, informative, self.timeframe, self.informative_timeframe, ffill=True)
+        informative = self.dp.get_pair_dataframe(
+            pair=metadata["pair"], timeframe=self.informative_timeframe
+        )
+        informative["ema_htf"] = ta.EMA(informative, timeperiod=self.buy_ema_htf_period.value)
+        dataframe = merge_informative_pair(
+            dataframe, informative, self.timeframe, self.informative_timeframe, ffill=True
+        )
 
         # Lower Timeframe Indicators
-        dataframe['cmo_ltf'] = ftt.cmo(dataframe, period=self.buy_cmo_ltf_period.value)
-        dataframe['rsi_ltf'] = ta.RSI(dataframe, timeperiod=self.buy_rsi_ltf_period.value)
+        dataframe["cmo_ltf"] = ta.CMO(dataframe, timeperiod=self.buy_cmo_ltf_period.value)
+        dataframe["rsi_ltf"] = ta.RSI(dataframe, timeperiod=self.buy_rsi_ltf_period.value)
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
-            (dataframe['close'] > dataframe[f'ema_htf_{self.informative_timeframe}']) &
-            (dataframe['cmo_ltf'] < self.buy_cmo_ltf_threshold.value) &
-            (dataframe['rsi_ltf'] < self.buy_rsi_ltf_threshold.value),
-            'enter_long'
+            (dataframe["close"] > dataframe[f"ema_htf_{self.informative_timeframe}"])
+            & (dataframe["cmo_ltf"] < self.buy_cmo_ltf_threshold.value)
+            & (dataframe["rsi_ltf"] < self.buy_rsi_ltf_threshold.value),
+            "enter_long",
         ] = 1
 
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe.loc[
-            (dataframe['cmo_ltf'] > self.sell_cmo_ltf_threshold.value),
-            'exit_long'
-        ] = 1
+        dataframe.loc[(dataframe["cmo_ltf"] > self.sell_cmo_ltf_threshold.value), "exit_long"] = 1
 
         return dataframe

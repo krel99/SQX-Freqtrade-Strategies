@@ -22,6 +22,7 @@ from freqtrade.persistence import Trade
 import talib.abstract as ta
 import technical.indicators as ftt
 
+
 class MT_ICH_ADX_1(IStrategy):
     """
     Multi-Timeframe Strategy with Ichimoku Cloud and ADX
@@ -80,36 +81,42 @@ class MT_ICH_ADX_1(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         # Higher Timeframe Indicators
-        informative = self.dp.get_pair_dataframe(pair=metadata['pair'], timeframe=self.informative_timeframe)
-        informative['ema_htf'] = ta.EMA(informative, timeperiod=self.buy_ema_htf_period.value)
-        dataframe = merge_informative_pair(dataframe, informative, self.timeframe, self.informative_timeframe, ffill=True)
+        informative = self.dp.get_pair_dataframe(
+            pair=metadata["pair"], timeframe=self.informative_timeframe
+        )
+        informative["ema_htf"] = ta.EMA(informative, timeperiod=self.buy_ema_htf_period.value)
+        dataframe = merge_informative_pair(
+            dataframe, informative, self.timeframe, self.informative_timeframe, ffill=True
+        )
 
         # Lower Timeframe Indicators
-        ichimoku = ftt.ichimoku(dataframe, conversion_line_period=self.buy_ichimoku_conversion_period.value, base_line_period=self.buy_ichimoku_base_period.value, lagging_span_2_period=self.buy_ichimoku_span_b_period.value)
-        dataframe['tenkan_sen'] = ichimoku['tenkan_sen']
-        dataframe['kijun_sen'] = ichimoku['kijun_sen']
-        dataframe['senkou_span_a'] = ichimoku['senkou_span_a']
-        dataframe['senkou_span_b'] = ichimoku['senkou_span_b']
-        dataframe['adx_ltf'] = ta.ADX(dataframe, timeperiod=self.buy_adx_ltf_period.value)
+        ichimoku = ftt.ichimoku(
+            dataframe,
+            conversion_line_period=self.buy_ichimoku_conversion_period.value,
+            base_line_periods=self.buy_ichimoku_base_period.value,
+            laggin_span=self.buy_ichimoku_span_b_period.value,
+        )
+        dataframe["tenkan_sen"] = ichimoku["tenkan_sen"]
+        dataframe["kijun_sen"] = ichimoku["kijun_sen"]
+        dataframe["senkou_span_a"] = ichimoku["senkou_span_a"]
+        dataframe["senkou_span_b"] = ichimoku["senkou_span_b"]
+        dataframe["adx_ltf"] = ta.ADX(dataframe, timeperiod=self.buy_adx_ltf_period.value)
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe.loc[
-            (dataframe['close'] > dataframe[f'ema_htf_{self.informative_timeframe}']) &
-            (dataframe['tenkan_sen'] > dataframe['kijun_sen']) &
-            (dataframe['close'] > dataframe['senkou_span_a']) &
-            (dataframe['close'] > dataframe['senkou_span_b']) &
-            (dataframe['adx_ltf'] > self.buy_adx_ltf_threshold.value),
-            'enter_long'
+            (dataframe["close"] > dataframe[f"ema_htf_{self.informative_timeframe}"])
+            & (dataframe["tenkan_sen"] > dataframe["kijun_sen"])
+            & (dataframe["close"] > dataframe["senkou_span_a"])
+            & (dataframe["close"] > dataframe["senkou_span_b"])
+            & (dataframe["adx_ltf"] > self.buy_adx_ltf_threshold.value),
+            "enter_long",
         ] = 1
 
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe.loc[
-            (dataframe['adx_ltf'] > self.sell_adx_ltf_threshold.value),
-            'exit_long'
-        ] = 1
+        dataframe.loc[(dataframe["adx_ltf"] > self.sell_adx_ltf_threshold.value), "exit_long"] = 1
 
         return dataframe
