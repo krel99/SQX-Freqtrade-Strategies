@@ -1,6 +1,6 @@
 # --- Do not remove these libs ---
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import numpy as np
 import talib.abstract as ta
@@ -14,6 +14,8 @@ from freqtrade.strategy import (
     IStrategy,
 )
 
+if TYPE_CHECKING:
+    from freqtrade.persistence import Trade
 
 # --------------------------------
 
