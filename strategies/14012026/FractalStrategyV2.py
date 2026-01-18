@@ -1,6 +1,6 @@
 # --- Do not remove these libs ---
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import numpy as np
 import talib.abstract as ta
@@ -15,10 +15,13 @@ from freqtrade.strategy import (
 )
 
 
+if TYPE_CHECKING:
+    from freqtrade.persistence import Trade
+
 # --------------------------------
 
 
-class FractalStrategy(IStrategy):
+class FractalStrategyV2(IStrategy):
     """
     Futures strategy based on Williams Fractals with long and short positions.
 
@@ -96,18 +99,14 @@ class FractalStrategy(IStrategy):
     short_use_adx_filter = BooleanParameter(default=False, space="sell", optimize=True)
 
     # === EXIT PARAMETERS (profit space) ===
-    # Take profit multiplier (corridor width multiplier)
-    tp_corridor_multiplier = DecimalParameter(
-        1.0, 6.0, default=3.0, decimals=1, space="profit", optimize=True
+    # Volatility-normalized take profit
+    volatility_tp_X = DecimalParameter(
+        2.0, 3.0, default=2.5, decimals=1, space="profit", optimize=True
     )
 
-    # Trailing stop for profitable trades
-    use_dynamic_trailing = BooleanParameter(default=True, space="profit", optimize=True)
-    trailing_activation = DecimalParameter(
-        0.01, 0.05, default=0.02, decimals=3, space="profit", optimize=True
-    )
-    trailing_distance = DecimalParameter(
-        0.005, 0.03, default=0.01, decimals=3, space="profit", optimize=True
+    # Price-based ATR trailing stop
+    atr_trailing_k = DecimalParameter(
+        1.0, 2.0, default=1.5, decimals=1, space="profit", optimize=True
     )
 
     # === STRATEGY SETTINGS ===
@@ -435,11 +434,59 @@ class FractalStrategy(IStrategy):
                 "atr_entry": last_candle.get("atr", 0),
                 "entry_time": current_time,
                 "side": side,
-                "highest_profit": 0,
-                "lowest_profit": 0,
+                "highest_price": rate,
+                "lowest_price": rate,
             }
 
         return True
+
+    def custom_stake_amount(
+        self,
+        pair: str,
+        current_time: datetime,
+        current_rate: float,
+        proposed_stake: float,
+        min_stake: Optional[float],
+        max_stake: float,
+        leverage: float,
+        entry_tag: Optional[str],
+        side: str,
+        **kwargs,
+    ) -> float:
+        """
+        Custom stake amount to prevent excessive position sizes in futures trading.
+        """
+        # Get wallet balance
+        wallet_balance = self.wallets.get_free(self.config["stake_currency"])
+
+        # In futures trading, we need to account for leverage
+        # The margin required = position_size / leverage
+        # So if we want max 10% of wallet as margin per trade:
+        max_margin_per_trade = wallet_balance * 0.10
+
+        # For futures, the stake amount represents the margin, not the full position
+        # The actual position size = stake * leverage
+        # We want to limit the margin (stake) to our max_margin_per_trade
+        max_allowed_stake = max_margin_per_trade
+
+        # Additional safety: limit stake to prevent over-leveraging
+        # Even with leverage, don't let single position exceed 30% of total wallet value
+        max_position_value = wallet_balance * 0.30
+        if leverage > 1:
+            # Stake = Position Value / Leverage
+            max_stake_from_position = max_position_value / leverage
+            max_allowed_stake = min(max_allowed_stake, max_stake_from_position)
+
+        # Use the minimum of proposed stake, calculated max, and max_stake
+        stake = min(proposed_stake, max_allowed_stake, max_stake)
+
+        # Ensure stake is at least min_stake
+        if min_stake and stake < min_stake:
+            # If our calculated stake is below minimum, skip this trade
+            # to avoid over-leveraging
+            return 0
+
+        return stake
 
     def custom_exit(
         self,
@@ -451,59 +498,50 @@ class FractalStrategy(IStrategy):
         **kwargs,
     ):
         """
-        Dynamic exit logic based on fractal corridors and profit targets.
+        Dynamic exit logic based on ATR trailing stop and other conditions.
         """
-        # Get stored fractal values
-        if not hasattr(self, "custom_info"):
-            self.custom_info = {}
+        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        last_candle = dataframe.iloc[-1]
+        atr_now = last_candle.get("atr", 0)
 
-        if pair not in self.custom_info:
+        if not hasattr(self, "custom_info") or pair not in self.custom_info:
             return None
 
         trade_info = self.custom_info[pair]
-        fractal_top_entry = trade_info.get("fractal_top_entry")
-        fractal_bottom_entry = trade_info.get("fractal_bottom_entry")
+        entry_atr = trade_info.get("atr_entry", atr_now) or atr_now
 
-        if fractal_top_entry is None or fractal_bottom_entry is None:
-            return None
+        # Update highest/lowest prices
+        trade_info["highest_price"] = max(trade_info.get("highest_price", 0), current_rate)
+        trade_info["lowest_price"] = min(trade_info.get("lowest_price", float("inf")), current_rate)
 
-        # Calculate corridor width
-        corridor_width = fractal_top_entry - fractal_bottom_entry
+        # --- Trailing-first exit philosophy ---
 
-        # Update highest/lowest profit tracking
-        if current_profit > trade_info.get("highest_profit", 0):
-            trade_info["highest_profit"] = current_profit
-        if current_profit < trade_info.get("lowest_profit", 0):
-            trade_info["lowest_profit"] = current_profit
-
-        # Take profit based on corridor width
+        # ATR-based trailing stop
         if not trade.is_short:
-            take_profit_price = trade.open_rate + (
-                corridor_width * self.tp_corridor_multiplier.value
-            )
-            if current_rate >= take_profit_price:
-                return "take_profit_corridor"
-
-            # Dynamic trailing stop for profitable trades
-            if self.use_dynamic_trailing.value and current_profit > self.trailing_activation.value:
-                if current_profit < (trade_info["highest_profit"] - self.trailing_distance.value):
-                    return "trailing_stop_dynamic"
+            trail_price = trade_info["highest_price"] - (atr_now * self.atr_trailing_k.value)
+            if current_rate < trail_price:
+                return "atr_trailing_exit"
         else:
-            take_profit_price = trade.open_rate - (
-                corridor_width * self.tp_corridor_multiplier.value
-            )
-            if current_rate <= take_profit_price:
-                return "take_profit_corridor"
+            trail_price = trade_info["lowest_price"] + (atr_now * self.atr_trailing_k.value)
+            if current_rate > trail_price:
+                return "atr_trailing_exit"
 
-            # Dynamic trailing stop for profitable trades
-            if self.use_dynamic_trailing.value and current_profit > self.trailing_activation.value:
-                if current_profit < (trade_info["highest_profit"] - self.trailing_distance.value):
-                    return "trailing_stop_dynamic"
+        # --- Other exit conditions ---
 
-        # Time-based exit (optional)
-        if (current_time - trade_info["entry_time"]).total_seconds() > 7200:  # 2 hours
-            if current_profit > 0.005:  # Exit if minimal profit after 2 hours
-                return "time_exit"
+        # Volatility-normalized take profit
+        if atr_now > 0:
+            normalized_profit = abs(current_rate - trade.open_rate) / atr_now
+            if normalized_profit >= self.volatility_tp_X.value:
+                return "volatility_tp"
+
+        # Time-decay exit for losing trades
+        trade_age_hours = (current_time - trade.open_date_utc).total_seconds() / 3600
+        if trade_age_hours > 3 and current_profit < -0.01:
+            return "time_decay_loss"
+
+        # Volatility collapse emergency exit
+        if entry_atr > 0 and (atr_now / entry_atr) < 0.6 and current_profit < -0.02:
+            return "volatility_collapse_exit"
 
         return None
 
@@ -555,7 +593,7 @@ class FractalStrategy(IStrategy):
                 return max(breakeven_stop, -stoploss_pct)
 
         # Ensure stoploss is not worse than the configured maximum
-        return min(-stoploss_pct, self.stoploss)
+        return max(-stoploss_pct, self.stoploss)
 
     def leverage(
         self,
