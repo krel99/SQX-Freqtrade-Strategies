@@ -9,109 +9,179 @@ from technical.indicators import heikin_ashi
 from datetime import datetime
 from functools import reduce
 
+
 class ThursdayStrategy(IStrategy):
     """
-    This strategy is designed to trade only on Thursdays, focusing on price and volume analysis.
+    Thursday-only futures strategy (long + short) focusing on price/volume.
+
+    Concept:
+    - Use Supertrend direction + Heikin-Ashi confirmation as structure.
+    - Use MFI as "pressure" (oversold/overbought) signal.
+    - Use OBV slope / confirmation (more robust than strict divergence gating).
+    - Same timeframe only; long EMA as regime filter.
+    - Hard time stop included.
     """
-    # Strategy interface version
+
     INTERFACE_VERSION = 3
+    can_short = True
 
-    # Minimal ROI designed for the strategy.
-    minimal_roi = {
-        "0": 0.17,
-        "30": 0.13,
-        "60": 0.09
-    }
+    max_open_trades = 2
+    process_only_new_candles = True
 
-    # Stoploss:
+    timeframe = '15m'
+    startup_candle_count = 900
+
+    minimal_roi = {"0": 0.14, "60": 0.08, "180": 0.03}
     stoploss = -0.13
 
-    # Trailing stop:
     trailing_stop = True
     trailing_stop_positive = 0.018
     trailing_stop_positive_offset = 0.028
     trailing_only_offset_is_reached = True
 
-    # Optimal timeframe for the strategy
-    timeframe = '15m'
+    use_exit_signal = True
+    exit_profit_only = False
+    ignore_roi_if_entry_signal = False
 
     # --- Hyperparameters ---
 
-    # Day of week
-    buy_day_of_week = CategoricalParameter([3], space='buy', default=3) # 3 = Thursday
+    buy_day_of_week = CategoricalParameter([3], space='buy', default=3)  # 3 = Thursday
 
-    # Trading hours
-    buy_hour_start = IntParameter(0, 12, default=0, space='buy')
+    buy_hour_start = IntParameter(0, 12, default=6, space='buy')
     buy_hour_end = IntParameter(13, 23, default=23, space='buy')
 
+    # Regime EMA (same timeframe)
+    regime_ema_period = IntParameter(200, 800, default=500, space='buy')
+    long_regime_buffer = DecimalParameter(0.985, 1.020, default=0.995, space='buy')
+    short_regime_buffer = DecimalParameter(0.980, 1.015, default=1.005, space='buy')
+
     # Supertrend
-    buy_st_period = IntParameter(7, 20, default=10, space='buy')
-    buy_st_multiplier = IntParameter(2, 5, default=3, space='buy')
+    buy_st_period = IntParameter(7, 30, default=10, space='buy')
+    buy_st_multiplier = IntParameter(2, 6, default=3, space='buy')
 
     # Money Flow Index (MFI)
-    buy_mfi_period = IntParameter(10, 20, default=14, space='buy')
-    buy_mfi_threshold = IntParameter(20, 40, default=30, space='buy')
+    buy_mfi_period = IntParameter(10, 30, default=14, space='buy')
+    buy_mfi_long = IntParameter(15, 55, default=35, space='buy')   # loosened to improve Thursday hit-rate
+    buy_mfi_short = IntParameter(45, 85, default=65, space='buy')
 
-    # On-Balance Volume (OBV)
-    buy_obv_divergence_period = IntParameter(10, 30, default=20, space='buy')
+    # OBV confirmation (use slope vs baseline rather than strict divergence)
+    buy_obv_period = IntParameter(10, 60, default=20, space='buy')
+
+    # Mild liquidity filter
+    buy_vol_sma_period = IntParameter(20, 80, default=30, space='buy')
+    buy_vol_mult = DecimalParameter(0.20, 1.20, default=0.50, space='buy')
+
+    # Hard trade duration limit
+    max_trade_minutes = IntParameter(120, 1440, default=720, space='sell')  # default 12 hours
+
+    @property
+    def protections(self):
+        return [
+            {"method": "CooldownPeriod", "stop_duration_candles": 80}  # ~20 hours on 15m
+        ]
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Day of week
         dataframe['day_of_week'] = dataframe['date'].dt.dayofweek
+        dataframe['hour'] = dataframe['date'].dt.hour
 
-        # Supertrend
-        st = self.supertrend(dataframe, self.buy_st_period.value, self.buy_st_multiplier.value)
+        # Regime EMA
+        dataframe['ema_regime'] = ta.EMA(dataframe, timeperiod=int(self.regime_ema_period.value))
+
+        # Supertrend (keep your implementation, but also expose direction flag)
+        st = self.supertrend(dataframe, int(self.buy_st_period.value), int(self.buy_st_multiplier.value))
         dataframe['supertrend'] = st['ST']
+        dataframe['st_uptrend'] = st['in_uptrend'].astype('int')
 
-        # Money Flow Index (MFI)
-        dataframe['mfi'] = ta.MFI(dataframe, timeperiod=self.buy_mfi_period.value)
+        # MFI
+        dataframe['mfi'] = ta.MFI(dataframe, timeperiod=int(self.buy_mfi_period.value))
 
-        # On-Balance Volume (OBV)
+        # OBV + slope/confirmation
         dataframe['obv'] = ta.OBV(dataframe)
+        p = int(self.buy_obv_period.value)
+        dataframe['obv_slope'] = dataframe['obv'] - dataframe['obv'].shift(p)
 
-        # Heikin-Ashi
-        heikin_ashi_df = heikin_ashi(dataframe)
-        dataframe['ha_close'] = heikin_ashi_df['close']
-        dataframe['ha_open'] = heikin_ashi_df['open']
+        # Heikin-Ashi candles
+        ha = heikin_ashi(dataframe)
+        dataframe['ha_close'] = ha['close']
+        dataframe['ha_open'] = ha['open']
+
+        # Liquidity baseline
+        vsp = int(self.buy_vol_sma_period.value)
+        dataframe['vol_sma'] = dataframe['volume'].rolling(vsp).mean()
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        conditions = []
+        thu = dataframe['day_of_week'] == self.buy_day_of_week.value
+        hours = (dataframe['hour'] >= self.buy_hour_start.value) & (dataframe['hour'] <= self.buy_hour_end.value)
 
-        # Day of week filter
-        conditions.append(dataframe['day_of_week'] == self.buy_day_of_week.value)
+        liquid = (dataframe['volume'] > 0) & (dataframe['volume'] >= dataframe['vol_sma'] * float(self.buy_vol_mult.value))
 
-        # Trading hours filter
-        conditions.append(dataframe['date'].dt.hour >= self.buy_hour_start.value)
-        conditions.append(dataframe['date'].dt.hour <= self.buy_hour_end.value)
+        # Regime filters (same timeframe)
+        long_regime_ok = dataframe['close'] >= (dataframe['ema_regime'] * float(self.long_regime_buffer.value))
+        short_regime_ok = dataframe['close'] <= (dataframe['ema_regime'] * float(self.short_regime_buffer.value))
 
-        # Supertrend
-        conditions.append(dataframe['close'] > dataframe['supertrend'])
+        # Heikin-Ashi direction
+        ha_bull = dataframe['ha_close'] > dataframe['ha_open']
+        ha_bear = dataframe['ha_close'] < dataframe['ha_open']
 
-        # Money Flow Index (MFI)
-        conditions.append(dataframe['mfi'] < self.buy_mfi_threshold.value)
+        # Supertrend direction (and simple reclaim/reject of supertrend line)
+        st_bull = dataframe['st_uptrend'] == 1
+        st_bear = dataframe['st_uptrend'] == 0
+        reclaim_st = qtpylib.crossed_above(dataframe['close'], dataframe['supertrend'])
+        reject_st = qtpylib.crossed_below(dataframe['close'], dataframe['supertrend'])
 
-        # On-Balance Volume (OBV)
-        obv_divergence = (dataframe['obv'] > dataframe['obv'].shift(self.buy_obv_divergence_period.value)) & \
-                         (dataframe['close'] < dataframe['close'].shift(self.buy_obv_divergence_period.value))
-        conditions.append(obv_divergence)
+        # MFI pressure
+        mfi_long_ok = dataframe['mfi'] <= self.buy_mfi_long.value
+        mfi_short_ok = dataframe['mfi'] >= self.buy_mfi_short.value
 
-        # Heikin-Ashi
-        conditions.append(dataframe['ha_close'] > dataframe['ha_open'])
+        # OBV confirmation: prefer OBV slope aligned with direction
+        obv_up = dataframe['obv_slope'] > 0
+        obv_dn = dataframe['obv_slope'] < 0
 
-        if conditions:
-            dataframe.loc[
-                reduce(lambda a, b: a & b, conditions),
-                'enter_long'] = 1
+        # --- LONG ---
+        # Structure (ST up OR reclaim) + HA bullish + MFI low-ish + OBV supportive + regime ok
+        long_trigger = (st_bull | reclaim_st) & ha_bull & mfi_long_ok & obv_up
+        dataframe.loc[thu & hours & liquid & long_regime_ok & long_trigger, 'enter_long'] = 1
+
+        # --- SHORT ---
+        # Structure (ST down OR reject) + HA bearish + MFI high-ish + OBV supportive + regime ok
+        short_trigger = (st_bear | reject_st) & ha_bear & mfi_short_ok & obv_dn
+        dataframe.loc[thu & hours & liquid & short_regime_ok & short_trigger, 'enter_short'] = 1
 
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Structured exits:
+        # - Long exits when price falls back below supertrend OR HA flips bearish.
+        # - Short exits when price rises above supertrend OR HA flips bullish.
+        dataframe.loc[
+            qtpylib.crossed_below(dataframe['close'], dataframe['supertrend']) | (dataframe['ha_close'] < dataframe['ha_open']),
+            'exit_long'
+        ] = 1
+
+        dataframe.loc[
+            qtpylib.crossed_above(dataframe['close'], dataframe['supertrend']) | (dataframe['ha_close'] > dataframe['ha_open']),
+            'exit_short'
+        ] = 1
+
         return dataframe
 
-    def supertrend(self, dataframe: DataFrame, period, multiplier):
+    def custom_exit(self, pair: str, trade, current_time: datetime, current_rate: float,
+                    current_profit: float, **kwargs):
+        # Hard time stop (both directions)
+        max_minutes = int(self.max_trade_minutes.value)
+        age_minutes = (current_time - trade.open_date_utc).total_seconds() / 60.0
+        if age_minutes >= max_minutes:
+            return "time_stop"
+        return None
 
+    def supertrend(self, dataframe: DataFrame, period, multiplier):
+        """
+        Keeps your original supertrend logic, but returns both ST line and direction flag.
+        Note: This is Python-loop based (slower). If you later want performance,
+        we can replace it with a vectorized/indicator-library supertrend.
+        """
         df = dataframe.copy()
 
         df['atr'] = ta.ATR(df, timeperiod=period)
@@ -134,9 +204,9 @@ class ThursdayStrategy(IStrategy):
 
                 if df['in_uptrend'][current] and df['lowerband'][current] < df['lowerband'][previous]:
                     df.loc[current, 'lowerband'] = df['lowerband'][previous]
-                if not df['in_uptrend'][current] and df['upperband'][current] > df['upperband'][previous]:
+                if (not df['in_uptrend'][current]) and df['upperband'][current] > df['upperband'][previous]:
                     df.loc[current, 'upperband'] = df['upperband'][previous]
 
         st = df.apply(lambda row: row['lowerband'] if row['in_uptrend'] else row['upperband'], axis=1)
 
-        return DataFrame({'ST': st}, index=df.index)
+        return DataFrame({'ST': st, 'in_uptrend': df['in_uptrend']}, index=df.index)
