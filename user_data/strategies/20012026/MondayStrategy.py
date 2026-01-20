@@ -8,173 +8,189 @@ import freqtrade.vendor.qtpylib.indicators as qtpylib
 from datetime import datetime
 from functools import reduce
 
+
 class MondayStrategy(IStrategy):
     """
-    This strategy is designed to trade only on Mondays, using a combination of indicators.
+    Monday-only futures strategy (long + short) designed to reliably take ~1 trade most Mondays.
+    No informative timeframes; uses long-period EMA on 15m as a regime filter.
+
+    Long idea: dip + recovery in non-bear regime.
+    Short idea: pop + rejection in non-bull regime.
     """
-    # Strategy interface version
+
     INTERFACE_VERSION = 3
+    can_short = True
 
-    # Minimal ROI designed for the strategy.
-    minimal_roi = {
-        "0": 0.15,
-        "30": 0.1,
-        "60": 0.05
-    }
+    max_open_trades = 2
+    process_only_new_candles = True
 
-    # Stoploss:
+    startup_candle_count = 700
+    timeframe = '15m'
+
+    minimal_roi = {"0": 0.12, "60": 0.07, "180": 0.03}
     stoploss = -0.10
 
-    # Trailing stop:
     trailing_stop = True
     trailing_stop_positive = 0.01
     trailing_stop_positive_offset = 0.02
     trailing_only_offset_is_reached = True
 
-    # Optimal timeframe for the strategy
-    timeframe = '15m'
+    use_exit_signal = True
+    exit_profit_only = False
+    ignore_roi_if_entry_signal = False
 
     # --- Hyperparameters ---
 
-    # Day of week
-    buy_day_of_week = CategoricalParameter([0], space='buy', default=0) # 0 = Monday
+    buy_day_of_week = CategoricalParameter([0], space='buy', default=0)  # Monday
 
-    # Trading hours
-    buy_hour_start = IntParameter(0, 12, default=0, space='buy')
+    buy_hour_start = IntParameter(0, 12, default=6, space='buy')
     buy_hour_end = IntParameter(13, 23, default=23, space='buy')
 
-    # EMA Cross
-    buy_ema_short_period = IntParameter(5, 20, default=10, space='buy')
-    buy_ema_long_period = IntParameter(20, 50, default=25, space='buy')
+    # Same-timeframe "HTF-like" regime EMA
+    ema_regime_period = IntParameter(200, 600, default=400, space='buy')
 
-    # Ichimoku Cloud
-    buy_ichimoku_span_a_period = IntParameter(20, 50, default=26, space='buy')
-    buy_ichimoku_span_b_period = IntParameter(50, 100, default=52, space='buy')
-    buy_ichimoku_kijun_sen_period = IntParameter(20, 50, default=26, space='buy')
+    # Regime buffers:
+    # Long allowed when close >= EMA * long_buffer
+    # Short allowed when close <= EMA * short_buffer
+    long_regime_buffer = DecimalParameter(0.985, 1.010, default=0.995, space='buy')
+    short_regime_buffer = DecimalParameter(0.990, 1.020, default=1.005, space='buy')
 
-    # RSI
-    buy_rsi_period = IntParameter(10, 30, default=14, space='buy')
-    buy_rsi_value = IntParameter(20, 40, default=30, space='buy')
+    # RSI / Stoch thresholds
+    rsi_period = IntParameter(10, 30, default=14, space='buy')
+    long_rsi = IntParameter(25, 55, default=42, space='buy')
+    short_rsi = IntParameter(45, 80, default=58, space='buy')
 
-    # Stochastic
-    buy_stoch_k = IntParameter(5, 20, default=14, space='buy')
-    buy_stoch_d = IntParameter(1, 10, default=3, space='buy')
-    buy_stoch_value = IntParameter(10, 40, default=20, space='buy')
+    stoch_k = IntParameter(5, 20, default=14, space='buy')
+    stoch_d = IntParameter(1, 10, default=3, space='buy')
+    long_stoch = IntParameter(10, 60, default=35, space='buy')
+    short_stoch = IntParameter(40, 90, default=65, space='buy')
 
-    # MACD
-    buy_macd_fast = IntParameter(10, 20, default=12, space='buy')
-    buy_macd_slow = IntParameter(20, 40, default=26, space='buy')
-    buy_macd_signal = IntParameter(5, 15, default=9, space='buy')
+    # Bollinger
+    bb_period = IntParameter(10, 40, default=20, space='buy')
+    bb_stddev = DecimalParameter(1.5, 3.0, default=2.0, space='buy')
 
-    # Bollinger Bands
-    buy_bb_period = IntParameter(10, 30, default=20, space='buy')
-    buy_bb_stddev = DecimalParameter(1.5, 3.0, default=2.0, space='buy')
+    # MACD (mild confirmation / turn)
+    macd_fast = IntParameter(10, 20, default=12, space='buy')
+    macd_slow = IntParameter(20, 40, default=26, space='buy')
+    macd_signal = IntParameter(5, 15, default=9, space='buy')
+
+    # Liquidity filter (mild)
+    vol_sma_period = IntParameter(20, 80, default=30, space='buy')
+    vol_mult = DecimalParameter(0.20, 1.20, default=0.50, space='buy')
+
+    # Trade duration hard stop
+    max_trade_minutes = IntParameter(120, 1440, default=480, space='sell')  # 8 hours default
+
+    @property
+    def protections(self):
+        return [
+            {"method": "CooldownPeriod", "stop_duration_candles": 80}  # ~20 hours on 15m
+        ]
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Day of week
         dataframe['day_of_week'] = dataframe['date'].dt.dayofweek
+        dataframe['hour'] = dataframe['date'].dt.hour
 
-        # EMA Cross
-        dataframe['ema_short'] = ta.EMA(dataframe, timeperiod=self.buy_ema_short_period.value)
-        dataframe['ema_long'] = ta.EMA(dataframe, timeperiod=self.buy_ema_long_period.value)
-
-        # Ichimoku Cloud
-        ichimoku = self.ichimoku(dataframe,
-                                conversion_line_period=9,
-                                base_line_periods=self.buy_ichimoku_kijun_sen_period.value,
-                                lagging_span_2_periods=self.buy_ichimoku_span_b_period.value,
-                                displacement=self.buy_ichimoku_span_a_period.value)
-        dataframe['tenkan_sen'] = ichimoku['tenkan_sen']
-        dataframe['kijun_sen'] = ichimoku['kijun_sen']
-        dataframe['senkou_span_a'] = ichimoku['senkou_span_a']
-        dataframe['senkou_span_b'] = ichimoku['senkou_span_b']
+        # Regime EMA
+        p = int(self.ema_regime_period.value)
+        dataframe['ema_regime'] = ta.EMA(dataframe, timeperiod=p)
 
         # RSI
-        dataframe['rsi'] = ta.RSI(dataframe, timeperiod=self.buy_rsi_period.value)
+        dataframe['rsi'] = ta.RSI(dataframe, timeperiod=int(self.rsi_period.value))
 
-        # Stochastic
-        stoch = ta.STOCH(dataframe,
-                         fastk_period=self.buy_stoch_k.value,
-                         slowk_period=3,
-                         slowd_period=self.buy_stoch_d.value)
-        dataframe['slowk'] = stoch['slowk']
-        dataframe['slowd'] = stoch['slowd']
+        # Stoch
+        st = ta.STOCH(
+            dataframe,
+            fastk_period=int(self.stoch_k.value),
+            slowk_period=3,
+            slowd_period=int(self.stoch_d.value)
+        )
+        dataframe['slowk'] = st['slowk']
+        dataframe['slowd'] = st['slowd']
 
         # MACD
-        macd = ta.MACD(dataframe,
-                       fastperiod=self.buy_macd_fast.value,
-                       slowperiod=self.buy_macd_slow.value,
-                       signalperiod=self.buy_macd_signal.value)
+        macd = ta.MACD(
+            dataframe,
+            fastperiod=int(self.macd_fast.value),
+            slowperiod=int(self.macd_slow.value),
+            signalperiod=int(self.macd_signal.value)
+        )
         dataframe['macd'] = macd['macd']
         dataframe['macdsignal'] = macd['macdsignal']
+        dataframe['macdhist'] = macd['macdhist']
 
-        # Bollinger Bands
-        bollinger = ta.BBANDS(dataframe,
-                              timeperiod=self.buy_bb_period.value,
-                              nbdevup=self.buy_bb_stddev.value,
-                              nbdevdn=self.buy_bb_stddev.value)
-        dataframe['bb_lowerband'] = bollinger['lowerband']
+        # Bollinger
+        bb = ta.BBANDS(
+            dataframe,
+            timeperiod=int(self.bb_period.value),
+            nbdevup=float(self.bb_stddev.value),
+            nbdevdn=float(self.bb_stddev.value)
+        )
+        dataframe['bb_lowerband'] = bb['lowerband']
+        dataframe['bb_middleband'] = bb['middleband']
+        dataframe['bb_upperband'] = bb['upperband']
+
+        # Liquidity baseline
+        vsp = int(self.vol_sma_period.value)
+        dataframe['vol_sma'] = dataframe['volume'].rolling(vsp).mean()
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        conditions = []
+        monday = dataframe['day_of_week'] == self.buy_day_of_week.value
+        hours = (dataframe['hour'] >= self.buy_hour_start.value) & (dataframe['hour'] <= self.buy_hour_end.value)
 
-        # Day of week filter
-        conditions.append(dataframe['day_of_week'] == self.buy_day_of_week.value)
+        liquid = (dataframe['volume'] > 0) & (dataframe['volume'] >= dataframe['vol_sma'] * float(self.vol_mult.value))
 
-        # Trading hours filter
-        conditions.append(dataframe['date'].dt.hour >= self.buy_hour_start.value)
-        conditions.append(dataframe['date'].dt.hour <= self.buy_hour_end.value)
+        # --- LONG ---
+        long_regime_ok = dataframe['close'] >= (dataframe['ema_regime'] * float(self.long_regime_buffer.value))
 
-        # EMA Cross
-        conditions.append(qtpylib.crossed_above(dataframe['ema_short'], dataframe['ema_long']))
+        long_dip = (
+            (dataframe['close'] <= dataframe['bb_lowerband']) |
+            (dataframe['rsi'] <= self.long_rsi.value) |
+            ((dataframe['slowk'] <= self.long_stoch.value) & (dataframe['slowd'] <= self.long_stoch.value))
+        )
 
-        # Ichimoku Cloud
-        conditions.append(dataframe['close'] > dataframe['senkou_span_a'])
-        conditions.append(dataframe['close'] > dataframe['senkou_span_b'])
+        long_reclaim = (
+            qtpylib.crossed_above(dataframe['close'], dataframe['bb_lowerband']) |
+            qtpylib.crossed_above(dataframe['close'], dataframe['bb_middleband']) |
+            (dataframe['macdhist'] > dataframe['macdhist'].shift(1))
+        )
 
-        # RSI
-        conditions.append(dataframe['rsi'] < self.buy_rsi_value.value)
+        dataframe.loc[monday & hours & liquid & long_regime_ok & long_dip & long_reclaim, 'enter_long'] = 1
 
-        # Stochastic
-        conditions.append(dataframe['slowk'] < self.buy_stoch_value.value)
-        conditions.append(dataframe['slowd'] < self.buy_stoch_value.value)
+        # --- SHORT ---
+        short_regime_ok = dataframe['close'] <= (dataframe['ema_regime'] * float(self.short_regime_buffer.value))
 
-        # MACD
-        conditions.append(dataframe['macd'] > dataframe['macdsignal'])
+        short_pop = (
+            (dataframe['close'] >= dataframe['bb_upperband']) |
+            (dataframe['rsi'] >= self.short_rsi.value) |
+            ((dataframe['slowk'] >= self.short_stoch.value) & (dataframe['slowd'] >= self.short_stoch.value))
+        )
 
-        # Bollinger Bands
-        conditions.append(dataframe['close'] < dataframe['bb_lowerband'])
+        short_reject = (
+            qtpylib.crossed_below(dataframe['close'], dataframe['bb_upperband']) |
+            qtpylib.crossed_below(dataframe['close'], dataframe['bb_middleband']) |
+            (dataframe['macdhist'] < dataframe['macdhist'].shift(1))
+        )
 
-        if conditions:
-            dataframe.loc[
-                reduce(lambda a, b: a & b, conditions),
-                'enter_long'] = 1
+        dataframe.loc[monday & hours & liquid & short_regime_ok & short_pop & short_reject, 'enter_short'] = 1
 
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Mean-reversion exits
+        dataframe.loc[dataframe['close'] > dataframe['bb_middleband'], 'exit_long'] = 1
+        dataframe.loc[dataframe['close'] < dataframe['bb_middleband'], 'exit_short'] = 1
         return dataframe
 
-    def ichimoku(self, dataframe: DataFrame, conversion_line_period: int, base_line_periods: int, lagging_span_2_periods: int, displacement: int):
-
-        # Tenkan-sen (Conversion Line)
-        period9_high = dataframe['high'].rolling(window=conversion_line_period).max()
-        period9_low = dataframe['low'].rolling(window=conversion_line_period).min()
-        tenkan_sen = (period9_high + period9_low) / 2
-
-        # Kijun-sen (Base Line)
-        period26_high = dataframe['high'].rolling(window=base_line_periods).max()
-        period26_low = dataframe['low'].rolling(window=base_line_periods).min()
-        kijun_sen = (period26_high + period26_low) / 2
-
-        # Senkou Span A (Leading Span A)
-        senkou_span_a = ((tenkan_sen + kijun_sen) / 2).shift(displacement)
-
-        # Senkou Span B (Leading Span B)
-        period52_high = dataframe['high'].rolling(window=lagging_span_2_periods).max()
-        period52_low = dataframe['low'].rolling(window=lagging_span_2_periods).min()
-        senkou_span_b = ((period52_high + period52_low) / 2).shift(displacement)
-
-        return {'tenkan_sen': tenkan_sen, 'kijun_sen': kijun_sen, 'senkou_span_a': senkou_span_a, 'senkou_span_b': senkou_span_b}
+    def custom_exit(self, pair: str, trade, current_time: datetime, current_rate: float,
+                    current_profit: float, **kwargs):
+        """
+        Hard time stop for BOTH long and short.
+        """
+        max_minutes = int(self.max_trade_minutes.value)
+        age_minutes = (current_time - trade.open_date_utc).total_seconds() / 60.0
+        if age_minutes >= max_minutes:
+            return "time_stop"
+        return None
