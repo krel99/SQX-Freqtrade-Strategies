@@ -4,7 +4,7 @@ from pandas import DataFrame
 import talib.abstract as ta
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 from technical.indicators import ehlers_fisher_transform, ehlers_mama
-
+import numpy as np
 # --- Strategy specific imports ---
 from datetime import datetime
 from functools import reduce
@@ -217,5 +217,5 @@ class TuesdayStrategy(IStrategy):
         low_n = dataframe['low'].rolling(window=period).min()
         denom = (high_n - low_n).replace(0, float('nan'))
 
-        chop = 100.0 * (ta.LOG10(tr_sum / denom) / ta.LOG10(period))
+        chop = 100.0 * (np.log10(tr_sum / denom) / np.log10(period))
         return chop
