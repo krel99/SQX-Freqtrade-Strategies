@@ -35,6 +35,9 @@ class BBMeanReversion_04(IStrategy):
     - Dynamic band multiplier based on volatility
     - Support/resistance levels
     - Better exit logic with scaled exits
+
+    FIXED: Hyperopt parameters now used in populate_entry_trend/populate_exit_trend
+    instead of populate_indicators for proper hyperopt compatibility.
     """
 
     # Strategy interface version
@@ -99,136 +102,128 @@ class BBMeanReversion_04(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Adds several different TA indicators to the given DataFrame
+        Pre-calculate indicators for all possible hyperopt parameter values.
+        This ensures hyperopt works correctly by having all variants available.
         """
 
-        # Bollinger Bands
-        bollinger = ta.BBANDS(
-            dataframe,
-            timeperiod=self.bb_period.value,
-            nbdevup=self.bb_std.value,
-            nbdevdn=self.bb_std.value,
-            matype=0,
-        )
-        dataframe["bb_upper"] = bollinger["upperband"]
-        dataframe["bb_mid"] = bollinger["middleband"]
-        dataframe["bb_lower"] = bollinger["lowerband"]
+        # Pre-calculate Bollinger Bands for all possible period/std combinations
+        for period in range(15, 26):
+            for std in [1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5]:
+                bollinger = ta.BBANDS(
+                    dataframe,
+                    timeperiod=period,
+                    nbdevup=std,
+                    nbdevdn=std,
+                    matype=0,
+                )
+                dataframe[f"bb_upper_{period}_{std}"] = bollinger["upperband"]
+                dataframe[f"bb_mid_{period}_{std}"] = bollinger["middleband"]
+                dataframe[f"bb_lower_{period}_{std}"] = bollinger["lowerband"]
 
-        # BB width and position
-        dataframe["bb_width"] = (
-            dataframe["bb_upper"] - dataframe["bb_lower"]
-        ) / dataframe["bb_mid"]
-        dataframe["bb_position"] = (dataframe["close"] - dataframe["bb_lower"]) / (
-            dataframe["bb_upper"] - dataframe["bb_lower"]
-        )
+        # Pre-calculate ADX for all possible periods
+        for period in range(10, 21):
+            dataframe[f"adx_{period}"] = ta.ADX(dataframe, timeperiod=period)
 
-        # ADX for trend strength
-        dataframe["adx"] = ta.ADX(dataframe, timeperiod=self.adx_period.value)
+        # Pre-calculate RSI for all possible periods
+        for period in range(10, 21):
+            dataframe[f"rsi_{period}"] = ta.RSI(dataframe, timeperiod=period)
 
-        # RSI
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.rsi_period.value)
+        # Pre-calculate Volume MA for all possible periods
+        for period in range(15, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
-        # Volume
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_ok"] = dataframe["volume"] > (
-            dataframe["volume_ma"] * self.volume_threshold.value
-        )
+        # Pre-calculate Keltner Channel components for all possible periods
+        for period in range(15, 26):
+            dataframe[f"kc_ema_{period}"] = ta.EMA(dataframe, timeperiod=period)
+            dataframe[f"kc_atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
+        # Fixed ATR for general use
         dataframe["atr"] = ta.ATR(dataframe, timeperiod=14)
 
-        # Keltner Channels for squeeze detection
-        kc_ema = ta.EMA(dataframe, timeperiod=self.kc_period.value)
-        kc_atr = ta.ATR(dataframe, timeperiod=self.kc_period.value)
-        dataframe["kc_upper"] = kc_ema + (kc_atr * self.kc_mult.value)
-        dataframe["kc_lower"] = kc_ema - (kc_atr * self.kc_mult.value)
-
-        # Bollinger Band Squeeze (BB inside KC = low volatility)
-        dataframe["bb_squeeze"] = (dataframe["bb_upper"] < dataframe["kc_upper"]) & (
-            dataframe["bb_lower"] > dataframe["kc_lower"]
-        )
-
-        # Price touches/pierces bands
-        dataframe["touches_lower"] = dataframe["low"] <= dataframe["bb_lower"]
-        dataframe["touches_upper"] = dataframe["high"] >= dataframe["bb_upper"]
-
-        # Close position relative to bands
-        dataframe["close_below_lower"] = dataframe["close"] < dataframe["bb_lower"]
-        dataframe["close_above_upper"] = dataframe["close"] > dataframe["bb_upper"]
-
-        # RSI divergence detection (simplified)
+        # RSI divergence detection (simplified) - using fixed lookback
         lookback = 10
         dataframe["price_lower"] = dataframe["low"] < dataframe["low"].shift(lookback)
-        dataframe["rsi_higher"] = dataframe["rsi"] > dataframe["rsi"].shift(lookback)
-        dataframe["bullish_div"] = dataframe["price_lower"] & dataframe["rsi_higher"]
-
-        dataframe["price_higher"] = dataframe["high"] > dataframe["high"].shift(
-            lookback
-        )
-        dataframe["rsi_lower"] = dataframe["rsi"] < dataframe["rsi"].shift(lookback)
-        dataframe["bearish_div"] = dataframe["price_higher"] & dataframe["rsi_lower"]
+        dataframe["price_higher"] = dataframe["high"] > dataframe["high"].shift(lookback)
 
         # Support/Resistance levels (using rolling min/max)
         support_period = 50
         resistance_period = 50
         dataframe["support"] = dataframe["low"].rolling(window=support_period).min()
-        dataframe["resistance"] = (
-            dataframe["high"].rolling(window=resistance_period).max()
-        )
-
-        # Distance from support/resistance
-        dataframe["dist_from_support"] = (
-            dataframe["close"] - dataframe["support"]
-        ) / dataframe["close"]
-        dataframe["dist_from_resistance"] = (
-            dataframe["resistance"] - dataframe["close"]
-        ) / dataframe["close"]
-
-        # BB band slope for momentum
-        dataframe["bb_upper_slope"] = (
-            (dataframe["bb_upper"] - dataframe["bb_upper"].shift(5))
-            / dataframe["bb_upper"].shift(5)
-            * 100
-        )
-        dataframe["bb_lower_slope"] = (
-            (dataframe["bb_lower"] - dataframe["bb_lower"].shift(5))
-            / dataframe["bb_lower"].shift(5)
-            * 100
-        )
+        dataframe["resistance"] = dataframe["high"].rolling(window=resistance_period).max()
 
         # Price momentum
         dataframe["momentum"] = (
-            (dataframe["close"] - dataframe["close"].shift(5))
-            / dataframe["close"].shift(5)
-            * 100
+            (dataframe["close"] - dataframe["close"].shift(5)) / dataframe["close"].shift(5) * 100
         )
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on TA indicators, populates the entry signals
+        Based on TA indicators, populates the entry signals.
+        Hyperopt parameters are used here so they're evaluated each epoch.
         """
+        # Get hyperopt parameter values
+        bb_period = self.bb_period.value
+        bb_std = self.bb_std.value
+        adx_period = self.adx_period.value
+        rsi_period = self.rsi_period.value
+        volume_ma_period = self.volume_ma_period.value
+        kc_period = self.kc_period.value
+        kc_mult = self.kc_mult.value
+
+        # Round bb_std to 1 decimal place to match pre-calculated columns
+        bb_std_rounded = round(bb_std, 1)
+
+        # Get the pre-calculated indicators for current hyperopt values
+        bb_upper = dataframe[f"bb_upper_{bb_period}_{bb_std_rounded}"]
+        bb_mid = dataframe[f"bb_mid_{bb_period}_{bb_std_rounded}"]
+        bb_lower = dataframe[f"bb_lower_{bb_period}_{bb_std_rounded}"]
+        adx = dataframe[f"adx_{adx_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+        kc_ema = dataframe[f"kc_ema_{kc_period}"]
+        kc_atr = dataframe[f"kc_atr_{kc_period}"]
+
+        # Calculate derived values using hyperopt parameters
+        bb_width = (bb_upper - bb_lower) / bb_mid
+
+        volume_ok = dataframe["volume"] > (volume_ma * self.volume_threshold.value)
+
+        kc_upper = kc_ema + (kc_atr * kc_mult)
+        kc_lower = kc_ema - (kc_atr * kc_mult)
+
+        # Bollinger Band Squeeze (BB inside KC = low volatility)
+        bb_squeeze = (bb_upper < kc_upper) & (bb_lower > kc_lower)
+
+        # Close position relative to bands
+        close_below_lower = dataframe["close"] < bb_lower
+        close_above_upper = dataframe["close"] > bb_upper
+
+        # RSI divergence using pre-calculated price comparisons
+        rsi_higher = rsi > rsi.shift(10)
+        rsi_lower = rsi < rsi.shift(10)
+        bullish_div = dataframe["price_lower"] & rsi_higher
+        bearish_div = dataframe["price_higher"] & rsi_lower
+
+        # Distance from support/resistance
+        dist_from_support = (dataframe["close"] - dataframe["support"]) / dataframe["close"]
+        dist_from_resistance = (dataframe["resistance"] - dataframe["close"]) / dataframe["close"]
 
         # LONG ENTRY (buy low)
         dataframe.loc[
             (
-                (dataframe["adx"] < self.adx_max.value)  # Avoid strong trend
-                & (dataframe["close_below_lower"])  # Price pierces lower band
-                & (dataframe["rsi"] < self.rsi_oversold.value)  # RSI confirms oversold
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["bb_width"] > 0.01)  # BB wide enough (not squeezed)
+                (adx < self.adx_max.value)  # Avoid strong trend
+                & (close_below_lower)  # Price pierces lower band
+                & (rsi < self.rsi_oversold.value)  # RSI confirms oversold
+                & (volume_ok)  # Volume confirmation
+                & (bb_width > 0.01)  # BB wide enough (not squeezed)
                 & (
-                    (dataframe["bullish_div"])  # Bullish divergence
-                    | (
-                        dataframe["momentum"] < -1.0
-                    )  # Or strong downward momentum (oversold)
+                    (bullish_div)  # Bullish divergence
+                    | (dataframe["momentum"] < -1.0)  # Or strong downward momentum (oversold)
                 )
-                & (dataframe["dist_from_support"] < 0.02)  # Near support
-                & (
-                    dataframe["bb_squeeze"].shift(1).fillna(True) == False
-                )  # Not coming out of squeeze
+                & (dist_from_support < 0.02)  # Near support
+                & (bb_squeeze.shift(1).fillna(True) == False)  # Not coming out of squeeze
             ),
             "enter_long",
         ] = 1
@@ -236,23 +231,17 @@ class BBMeanReversion_04(IStrategy):
         # SHORT ENTRY (sell high)
         dataframe.loc[
             (
-                (dataframe["adx"] < self.adx_max.value)  # Avoid strong trend
-                & (dataframe["close_above_upper"])  # Price pierces upper band
+                (adx < self.adx_max.value)  # Avoid strong trend
+                & (close_above_upper)  # Price pierces upper band
+                & (rsi > self.rsi_overbought.value)  # RSI confirms overbought
+                & (volume_ok)  # Volume confirmation
+                & (bb_width > 0.01)  # BB wide enough (not squeezed)
                 & (
-                    dataframe["rsi"] > self.rsi_overbought.value
-                )  # RSI confirms overbought
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["bb_width"] > 0.01)  # BB wide enough (not squeezed)
-                & (
-                    (dataframe["bearish_div"])  # Bearish divergence
-                    | (
-                        dataframe["momentum"] > 1.0
-                    )  # Or strong upward momentum (overbought)
+                    (bearish_div)  # Bearish divergence
+                    | (dataframe["momentum"] > 1.0)  # Or strong upward momentum (overbought)
                 )
-                & (dataframe["dist_from_resistance"] < 0.02)  # Near resistance
-                & (
-                    dataframe["bb_squeeze"].shift(1).fillna(True) == False
-                )  # Not coming out of squeeze
+                & (dist_from_resistance < 0.02)  # Near resistance
+                & (bb_squeeze.shift(1).fillna(True) == False)  # Not coming out of squeeze
             ),
             "enter_short",
         ] = 1
@@ -261,25 +250,40 @@ class BBMeanReversion_04(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on TA indicators, populates the exit signals
+        Based on TA indicators, populates the exit signals.
+        Hyperopt parameters are used here so they're evaluated each epoch.
         """
+        # Get hyperopt parameter values
+        bb_period = self.bb_period.value
+        bb_std = self.bb_std.value
+        adx_period = self.adx_period.value
+        rsi_period = self.rsi_period.value
+
+        # Round bb_std to 1 decimal place to match pre-calculated columns
+        bb_std_rounded = round(bb_std, 1)
+
+        # Get the pre-calculated indicators for current hyperopt values
+        bb_upper = dataframe[f"bb_upper_{bb_period}_{bb_std_rounded}"]
+        bb_mid = dataframe[f"bb_mid_{bb_period}_{bb_std_rounded}"]
+        bb_lower = dataframe[f"bb_lower_{bb_period}_{bb_std_rounded}"]
+        adx = dataframe[f"adx_{adx_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
 
         # Calculate target exit points
-        dataframe["long_target"] = dataframe["bb_lower"] + (
-            (dataframe["bb_mid"] - dataframe["bb_lower"]) * self.bb_exit_ratio.value
-        )
-        dataframe["short_target"] = dataframe["bb_upper"] - (
-            (dataframe["bb_upper"] - dataframe["bb_mid"]) * self.bb_exit_ratio.value
-        )
+        long_target = bb_lower + ((bb_mid - bb_lower) * self.bb_exit_ratio.value)
+        short_target = bb_upper - ((bb_upper - bb_mid) * self.bb_exit_ratio.value)
+
+        close_below_lower = dataframe["close"] < bb_lower
+        close_above_upper = dataframe["close"] > bb_upper
 
         # LONG EXIT
         dataframe.loc[
             (
-                (dataframe["close"] >= dataframe["long_target"])  # Reached target
-                | (dataframe["close"] >= dataframe["bb_mid"])  # Reached middle band
-                | (dataframe["rsi"] > 65)  # RSI no longer oversold
-                | (dataframe["adx"] > 30)  # Trend becoming too strong
-                | (dataframe["close_above_upper"])  # Extreme reversal
+                (dataframe["close"] >= long_target)  # Reached target
+                | (dataframe["close"] >= bb_mid)  # Reached middle band
+                | (rsi > 65)  # RSI no longer oversold
+                | (adx > 30)  # Trend becoming too strong
+                | (close_above_upper)  # Extreme reversal
             ),
             "exit_long",
         ] = 1
@@ -287,11 +291,11 @@ class BBMeanReversion_04(IStrategy):
         # SHORT EXIT
         dataframe.loc[
             (
-                (dataframe["close"] <= dataframe["short_target"])  # Reached target
-                | (dataframe["close"] <= dataframe["bb_mid"])  # Reached middle band
-                | (dataframe["rsi"] < 35)  # RSI no longer overbought
-                | (dataframe["adx"] > 30)  # Trend becoming too strong
-                | (dataframe["close_below_lower"])  # Extreme reversal
+                (dataframe["close"] <= short_target)  # Reached target
+                | (dataframe["close"] <= bb_mid)  # Reached middle band
+                | (rsi < 35)  # RSI no longer overbought
+                | (adx > 30)  # Trend becoming too strong
+                | (close_below_lower)  # Extreme reversal
             ),
             "exit_short",
         ] = 1
@@ -314,24 +318,43 @@ class BBMeanReversion_04(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get hyperopt parameter values
+        bb_period = self.bb_period.value
+        bb_std = round(self.bb_std.value, 1)
+        adx_period = self.adx_period.value
+        kc_period = self.kc_period.value
+        kc_mult = self.kc_mult.value
+
+        bb_upper = last_candle[f"bb_upper_{bb_period}_{bb_std}"]
+        bb_lower = last_candle[f"bb_lower_{bb_period}_{bb_std}"]
+        bb_mid = last_candle[f"bb_mid_{bb_period}_{bb_std}"]
+        adx = last_candle[f"adx_{adx_period}"]
+        kc_ema = last_candle[f"kc_ema_{kc_period}"]
+        kc_atr = last_candle[f"kc_atr_{kc_period}"]
+
+        bb_width = (bb_upper - bb_lower) / bb_mid
+        kc_upper = kc_ema + (kc_atr * kc_mult)
+        kc_lower = kc_ema - (kc_atr * kc_mult)
+        bb_squeeze = (bb_upper < kc_upper) and (bb_lower > kc_lower)
+
         # Quick profit taking for mean reversion
         if current_profit > self.take_profit_pct.value:
             return "take_profit"
 
         # Exit if ADX shows trending market developing
-        if last_candle["adx"] > 35:
+        if adx > 35:
             return "trend_developing"
 
         # Exit if BB squeeze is starting (volatility contraction)
-        if last_candle["bb_squeeze"] and last_candle["bb_width"] < 0.008:
+        if bb_squeeze and bb_width < 0.008:
             return "bb_squeeze_exit"
 
         # Exit long if we hit upper band (full reversion)
-        if not trade.is_short and last_candle["close"] > last_candle["bb_upper"]:
+        if not trade.is_short and last_candle["close"] > bb_upper:
             return "hit_upper_band"
 
         # Exit short if we hit lower band (full reversion)
-        if trade.is_short and last_candle["close"] < last_candle["bb_lower"]:
+        if trade.is_short and last_candle["close"] < bb_lower:
             return "hit_lower_band"
 
         # Time-based exit for stuck trades
@@ -364,10 +387,20 @@ class BBMeanReversion_04(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get hyperopt parameter values
+        bb_period = self.bb_period.value
+        bb_std = round(self.bb_std.value, 1)
+
+        bb_upper = last_candle[f"bb_upper_{bb_period}_{bb_std}"]
+        bb_lower = last_candle[f"bb_lower_{bb_period}_{bb_std}"]
+        bb_mid = last_candle[f"bb_mid_{bb_period}_{bb_std}"]
+
+        bb_width = (bb_upper - bb_lower) / bb_mid
+
         # Dynamic stop based on BB width
-        if last_candle["bb_width"] > 0.03:  # Wide bands = high volatility
+        if bb_width > 0.03:  # Wide bands = high volatility
             dynamic_stop = -0.06
-        elif last_candle["bb_width"] > 0.02:
+        elif bb_width > 0.02:
             dynamic_stop = -0.045
         else:
             dynamic_stop = -0.035

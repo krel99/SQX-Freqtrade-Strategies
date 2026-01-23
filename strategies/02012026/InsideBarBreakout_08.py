@@ -109,9 +109,9 @@ class InsideBarBreakout_08(IStrategy):
         """
 
         # Identify inside bars
-        dataframe["is_inside_bar"] = (
-            dataframe["high"] < dataframe["high"].shift(1)
-        ) & (dataframe["low"] > dataframe["low"].shift(1))
+        dataframe["is_inside_bar"] = (dataframe["high"] < dataframe["high"].shift(1)) & (
+            dataframe["low"] > dataframe["low"].shift(1)
+        )
 
         # Track mother bar (the bar before inside bar)
         dataframe["mother_high"] = np.where(
@@ -127,9 +127,7 @@ class InsideBarBreakout_08(IStrategy):
 
         # Mother bar size
         dataframe["mother_size"] = dataframe["mother_high"] - dataframe["mother_low"]
-        dataframe["mother_size_pct"] = (
-            dataframe["mother_size"] / dataframe["mother_low"] * 100
-        )
+        dataframe["mother_size_pct"] = dataframe["mother_size"] / dataframe["mother_low"] * 100
 
         # Count consecutive inside bars
         dataframe["inside_bar_count"] = 0
@@ -156,27 +154,21 @@ class InsideBarBreakout_08(IStrategy):
             & (dataframe["inside_bar_count"] == 0)
         )
 
-        # Volume
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_ok"] = dataframe["volume"] >= (
-            dataframe["volume_ma"] * self.volume_threshold.value
-        )
+        # Volume - pre-calculate for all possible periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
-        # ATR for stops and targets
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
+        # ATR for stops and targets - pre-calculate for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        # EMA for trend context
-        dataframe["ema"] = ta.EMA(dataframe, timeperiod=self.ema_period.value)
-        dataframe["uptrend"] = dataframe["close"] > dataframe["ema"]
-        dataframe["downtrend"] = dataframe["close"] < dataframe["ema"]
+        # EMA for trend context - pre-calculate for all possible periods (40-60)
+        for period in range(40, 61):
+            dataframe[f"ema_{period}"] = ta.EMA(dataframe, timeperiod=period)
 
         # Price momentum
         dataframe["momentum"] = (
-            (dataframe["close"] - dataframe["close"].shift(5))
-            / dataframe["close"].shift(5)
-            * 100
+            (dataframe["close"] - dataframe["close"].shift(5)) / dataframe["close"].shift(5) * 100
         )
 
         # Candle analysis
@@ -187,18 +179,12 @@ class InsideBarBreakout_08(IStrategy):
         # Strong candles for breakout confirmation
         dataframe["bullish_candle"] = dataframe["close"] > dataframe["open"]
         dataframe["bearish_candle"] = dataframe["close"] < dataframe["open"]
-        dataframe["strong_bullish"] = dataframe["bullish_candle"] & (
-            dataframe["body_ratio"] > 0.6
-        )
-        dataframe["strong_bearish"] = dataframe["bearish_candle"] & (
-            dataframe["body_ratio"] > 0.6
-        )
+        dataframe["strong_bullish"] = dataframe["bullish_candle"] & (dataframe["body_ratio"] > 0.6)
+        dataframe["strong_bearish"] = dataframe["bearish_candle"] & (dataframe["body_ratio"] > 0.6)
 
         # Hour for time filter
         dataframe["hour"] = dataframe["date"].dt.hour
-        dataframe["session_active"] = (dataframe["hour"] >= self.start_hour.value) & (
-            dataframe["hour"] < self.end_hour.value
-        )
+        # Session active will be calculated in entry/exit trends based on hyperopt params
 
         # False breakout detection - price returns to range
         dataframe["false_breakout_up"] = (
@@ -226,23 +212,38 @@ class InsideBarBreakout_08(IStrategy):
         Based on TA indicators, populates the entry signals
         """
 
+        # Get current hyperopt parameter values
+        volume_ma_period = self.volume_ma_period.value
+        volume_threshold = self.volume_threshold.value
+        ema_period = self.ema_period.value
+        start_hour = self.start_hour.value
+        end_hour = self.end_hour.value
+
+        # Select pre-calculated indicators
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+        ema = dataframe[f"ema_{ema_period}"]
+
+        # Calculate dynamic conditions
+        volume_ok = dataframe["volume"] >= (volume_ma * volume_threshold)
+        uptrend = dataframe["close"] > ema
+        downtrend = dataframe["close"] < ema
+        session_active = (dataframe["hour"] >= start_hour) & (dataframe["hour"] < end_hour)
+
         # LONG ENTRY: break above mother bar high
         dataframe.loc[
             (
                 (dataframe["breakout_up"])  # Breakout above mother bar
                 & (dataframe["strong_bullish"])  # Strong bullish candle
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["uptrend"])  # In uptrend
-                & (dataframe["session_active"])  # Active trading session
+                & (volume_ok)  # Volume confirmation
+                & (uptrend)  # In uptrend
+                & (session_active)  # Active trading session
                 & (
                     dataframe["mother_size_pct"] >= self.min_mother_bar_size.value
                 )  # Mother bar not too small
                 & (
                     dataframe["mother_size_pct"] <= self.max_mother_bar_size.value
                 )  # Mother bar not too large
-                & (
-                    dataframe["false_breakout_up"].shift(1) == False
-                )  # No recent false breakout
+                & (dataframe["false_breakout_up"].shift(1) == False)  # No recent false breakout
                 & (dataframe["momentum"] > 0)  # Positive momentum
                 & (dataframe["rsi"] > 45)  # Not oversold
                 & (dataframe["rsi"] < 70)  # Not overbought
@@ -255,18 +256,16 @@ class InsideBarBreakout_08(IStrategy):
             (
                 (dataframe["breakout_down"])  # Breakout below mother bar
                 & (dataframe["strong_bearish"])  # Strong bearish candle
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["downtrend"])  # In downtrend
-                & (dataframe["session_active"])  # Active trading session
+                & (volume_ok)  # Volume confirmation
+                & (downtrend)  # In downtrend
+                & (session_active)  # Active trading session
                 & (
                     dataframe["mother_size_pct"] >= self.min_mother_bar_size.value
                 )  # Mother bar not too small
                 & (
                     dataframe["mother_size_pct"] <= self.max_mother_bar_size.value
                 )  # Mother bar not too large
-                & (
-                    dataframe["false_breakout_down"].shift(1) == False
-                )  # No recent false breakout
+                & (dataframe["false_breakout_down"].shift(1) == False)  # No recent false breakout
                 & (dataframe["momentum"] < 0)  # Negative momentum
                 & (dataframe["rsi"] < 55)  # Not overbought
                 & (dataframe["rsi"] > 30)  # Not oversold
@@ -281,29 +280,36 @@ class InsideBarBreakout_08(IStrategy):
         Based on TA indicators, populates the exit signals
         """
 
-        # Calculate dynamic targets
-        dataframe["long_target"] = dataframe["mother_high"] + (
-            dataframe["atr"] * self.atr_mult_target.value
-        )
-        dataframe["long_stop"] = dataframe["mother_low"] - (
-            dataframe["atr"] * self.atr_mult_stop.value
-        )
+        # Get current hyperopt parameter values
+        atr_period = self.atr_period.value
+        ema_period = self.ema_period.value
+        start_hour = self.start_hour.value
+        end_hour = self.end_hour.value
 
-        dataframe["short_target"] = dataframe["mother_low"] - (
-            dataframe["atr"] * self.atr_mult_target.value
-        )
-        dataframe["short_stop"] = dataframe["mother_high"] + (
-            dataframe["atr"] * self.atr_mult_stop.value
-        )
+        # Select pre-calculated indicators
+        atr = dataframe[f"atr_{atr_period}"]
+        ema = dataframe[f"ema_{ema_period}"]
+
+        # Calculate dynamic conditions
+        uptrend = dataframe["close"] > ema
+        downtrend = dataframe["close"] < ema
+        session_active = (dataframe["hour"] >= start_hour) & (dataframe["hour"] < end_hour)
+
+        # Calculate dynamic targets
+        long_target = dataframe["mother_high"] + (atr * self.atr_mult_target.value)
+        long_stop = dataframe["mother_low"] - (atr * self.atr_mult_stop.value)
+
+        short_target = dataframe["mother_low"] - (atr * self.atr_mult_target.value)
+        short_stop = dataframe["mother_high"] + (atr * self.atr_mult_stop.value)
 
         # LONG EXIT
         dataframe.loc[
             (
-                (dataframe["close"] >= dataframe["long_target"])  # Target reached
-                | (dataframe["close"] <= dataframe["long_stop"])  # Stop hit
-                | (dataframe["downtrend"])  # Trend change
+                (dataframe["close"] >= long_target)  # Target reached
+                | (dataframe["close"] <= long_stop)  # Stop hit
+                | (downtrend)  # Trend change
                 | (dataframe["strong_bearish"])  # Strong reversal candle
-                | (~dataframe["session_active"])  # Session ending
+                | (~session_active)  # Session ending
                 | (dataframe["rsi"] > 75)  # Overbought
             ),
             "exit_long",
@@ -312,11 +318,11 @@ class InsideBarBreakout_08(IStrategy):
         # SHORT EXIT
         dataframe.loc[
             (
-                (dataframe["close"] <= dataframe["short_target"])  # Target reached
-                | (dataframe["close"] >= dataframe["short_stop"])  # Stop hit
-                | (dataframe["uptrend"])  # Trend change
+                (dataframe["close"] <= short_target)  # Target reached
+                | (dataframe["close"] >= short_stop)  # Stop hit
+                | (uptrend)  # Trend change
                 | (dataframe["strong_bullish"])  # Strong reversal candle
-                | (~dataframe["session_active"])  # Session ending
+                | (~session_active)  # Session ending
                 | (dataframe["rsi"] < 25)  # Oversold
             ),
             "exit_short",
@@ -345,9 +351,7 @@ class InsideBarBreakout_08(IStrategy):
             return "profit_target"
 
         # Exit if price returns to mother bar range (failed breakout)
-        if not np.isnan(last_candle["mother_high"]) and not np.isnan(
-            last_candle["mother_low"]
-        ):
+        if not np.isnan(last_candle["mother_high"]) and not np.isnan(last_candle["mother_low"]):
             if not trade.is_short:
                 if current_rate < last_candle["mother_high"]:
                     return "failed_breakout_long"
@@ -391,18 +395,20 @@ class InsideBarBreakout_08(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get ATR using current hyperopt parameter value
+        atr_period = self.atr_period.value
+        atr = last_candle[f"atr_{atr_period}"]
+
         # Use mother bar as natural stop level
-        if not np.isnan(last_candle["mother_high"]) and not np.isnan(
-            last_candle["mother_low"]
-        ):
+        if not np.isnan(last_candle["mother_high"]) and not np.isnan(last_candle["mother_low"]):
             if not trade.is_short:
                 # For long, stop below mother bar low
-                stop_price = last_candle["mother_low"] - (last_candle["atr"] * 0.5)
+                stop_price = last_candle["mother_low"] - (atr * 0.5)
                 stop_pct = -(trade.open_rate - stop_price) / trade.open_rate
                 return max(stop_pct, self.stoploss)
             else:
                 # For short, stop above mother bar high
-                stop_price = last_candle["mother_high"] + (last_candle["atr"] * 0.5)
+                stop_price = last_candle["mother_high"] + (atr * 0.5)
                 stop_pct = -(stop_price - trade.open_rate) / trade.open_rate
                 return max(stop_pct, self.stoploss)
 
@@ -435,16 +441,25 @@ class InsideBarBreakout_08(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        atr_period = self.atr_period.value
+        start_hour = self.start_hour.value
+        end_hour = self.end_hour.value
+
+        # Select pre-calculated indicators
+        atr = last_candle[f"atr_{atr_period}"]
+
         # Don't enter if mother bar is too old
         if last_candle["inside_bar_count"] > self.max_inside_bars.value:
             return False
 
         # Don't enter if volatility is too low
-        if last_candle["atr"] < last_candle["close"] * 0.001:
+        if atr < last_candle["close"] * 0.001:
             return False
 
         # Avoid low liquidity hours
-        if not last_candle["session_active"]:
+        session_active = (last_candle["hour"] >= start_hour) and (last_candle["hour"] < end_hour)
+        if not session_active:
             return False
 
         return True

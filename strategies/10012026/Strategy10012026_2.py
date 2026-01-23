@@ -114,80 +114,123 @@ class Strategy10012026_2(IStrategy):
 
     @informative("1h")
     def populate_indicators_4h(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # RSI
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.inf_rsi_period.value)
+        """
+        Pre-calculates all indicator variants for hyperopt compatibility.
+        """
+        # Pre-calculate RSI for all periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"rsi_{period}"] = ta.RSI(dataframe, timeperiod=period)
 
-        # MACD
-        macd = ta.MACD(
-            dataframe,
-            fastperiod=self.inf_macd_fast.value,
-            slowperiod=self.inf_macd_slow.value,
-            signalperiod=self.inf_macd_signal.value,
-        )
-        dataframe["macd"] = macd["macd"]
-        dataframe["macdsignal"] = macd["macdsignal"]
+        # Pre-calculate MACD for common combinations
+        for fast in range(6, 25):
+            for slow in range(13, 53):
+                for signal in range(5, 19):
+                    if fast < slow:
+                        macd = ta.MACD(
+                            dataframe, fastperiod=fast, slowperiod=slow, signalperiod=signal
+                        )
+                        dataframe[f"macd_{fast}_{slow}_{signal}"] = macd["macd"]
+                        dataframe[f"macdsignal_{fast}_{slow}_{signal}"] = macd["macdsignal"]
 
-        # DMI
-        dataframe["plus_di"] = ta.PLUS_DI(dataframe, timeperiod=self.inf_dmi_period.value)
-        dataframe["minus_di"] = ta.MINUS_DI(dataframe, timeperiod=self.inf_dmi_period.value)
-        dataframe["adx"] = ta.ADX(dataframe, timeperiod=self.inf_dmi_period.value)
+        # Pre-calculate DMI for all periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"plus_di_{period}"] = ta.PLUS_DI(dataframe, timeperiod=period)
+            dataframe[f"minus_di_{period}"] = ta.MINUS_DI(dataframe, timeperiod=period)
+            dataframe[f"adx_{period}"] = ta.ADX(dataframe, timeperiod=period)
 
-        # EMA
-        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod=self.inf_ema_fast_period.value)
-        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod=self.inf_ema_slow_period.value)
+        # Pre-calculate EMA for all periods (20-240)
+        for period in range(20, 241):
+            dataframe[f"ema_{period}"] = ta.EMA(dataframe, timeperiod=period)
 
-        # Williams %R
-        dataframe["willr"] = ta.WILLR(dataframe, timeperiod=self.inf_willr_period.value)
+        # Pre-calculate Williams %R for all periods (10-50)
+        for period in range(10, 51):
+            dataframe[f"willr_{period}"] = ta.WILLR(dataframe, timeperiod=period)
 
         return dataframe
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # -- Primary timeframe indicators --
-        # StochRSI
-        stoch_rsi = ta.STOCHRSI(dataframe, timeperiod=self.buy_stochrsi_period.value)
-        dataframe["stochrsi_k"] = stoch_rsi["fastk"]
-        dataframe["stochrsi_d"] = stoch_rsi["fastd"]
+        """
+        Pre-calculates all indicator variants for hyperopt compatibility.
+        """
+        # Pre-calculate StochRSI for all periods (5-30)
+        for period in range(5, 31):
+            stoch_rsi = ta.STOCHRSI(dataframe, timeperiod=period)
+            dataframe[f"stochrsi_k_{period}"] = stoch_rsi["fastk"]
+            dataframe[f"stochrsi_d_{period}"] = stoch_rsi["fastd"]
 
-        # Awesome Oscillator
-        dataframe["ao"] = qtpylib.awesome_oscillator(
-            dataframe, fast=self.buy_ao_fast.value, slow=self.buy_ao_slow.value
-        )
+        # Pre-calculate Awesome Oscillator for all combinations
+        for fast in range(3, 11):
+            for slow in range(20, 51):
+                if fast < slow:
+                    dataframe[f"ao_{fast}_{slow}"] = qtpylib.awesome_oscillator(
+                        dataframe, fast=fast, slow=slow
+                    )
 
-        # CCI 1 & 2
-        dataframe["cci"] = ta.CCI(dataframe, timeperiod=self.buy_cci_period.value)
-        dataframe["cci2"] = ta.CCI(dataframe, timeperiod=self.buy_cci_period2.value)
+        # Pre-calculate CCI for all periods (10-60)
+        for period in range(10, 61):
+            dataframe[f"cci_{period}"] = ta.CCI(dataframe, timeperiod=period)
 
-        # CMF
-        dataframe["cmf"] = pandas_ta.cmf(
-            high=dataframe["high"],
-            low=dataframe["low"],
-            close=dataframe["close"],
-            volume=dataframe["volume"],
-            length=self.buy_cmf_period.value,
-        )
+        # Pre-calculate CMF for all periods (10-40)
+        for period in range(10, 41):
+            dataframe[f"cmf_{period}"] = pandas_ta.cmf(
+                high=dataframe["high"],
+                low=dataframe["low"],
+                close=dataframe["close"],
+                volume=dataframe["volume"],
+                length=period,
+            )
 
-        # ATR for exits
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.sell_atr_period.value)
+        # Pre-calculate ATR for all periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Higher timeframe confirmation - require at least 3 out of 6 conditions
-        htf_rsi = dataframe[f"rsi_{self.info_timeframe}"] > self.inf_rsi_threshold.value
+        # Get current hyperopt parameter values
+        inf_rsi_period = self.inf_rsi_period.value
+        inf_macd_fast = self.inf_macd_fast.value
+        inf_macd_slow = self.inf_macd_slow.value
+        inf_macd_signal = self.inf_macd_signal.value
+        inf_dmi_period = self.inf_dmi_period.value
+        inf_ema_fast_period = self.inf_ema_fast_period.value
+        inf_ema_slow_period = self.inf_ema_slow_period.value
+        inf_willr_period = self.inf_willr_period.value
+
+        stochrsi_period = self.buy_stochrsi_period.value
+        ao_fast = self.buy_ao_fast.value
+        ao_slow = self.buy_ao_slow.value
+        cci_period = self.buy_cci_period.value
+        cci_period2 = self.buy_cci_period2.value
+        cmf_period = self.buy_cmf_period.value
+
+        # Select pre-calculated indicators from 1h timeframe
+        htf_rsi = (
+            dataframe[f"rsi_{inf_rsi_period}_{self.info_timeframe}"] > self.inf_rsi_threshold.value
+        )
         htf_macd = (
-            dataframe[f"macd_{self.info_timeframe}"]
-            > dataframe[f"macdsignal_{self.info_timeframe}"]
+            dataframe[
+                f"macd_{inf_macd_fast}_{inf_macd_slow}_{inf_macd_signal}_{self.info_timeframe}"
+            ]
+            > dataframe[
+                f"macdsignal_{inf_macd_fast}_{inf_macd_slow}_{inf_macd_signal}_{self.info_timeframe}"
+            ]
         )
         htf_dmi = (
-            dataframe[f"plus_di_{self.info_timeframe}"]
-            > dataframe[f"minus_di_{self.info_timeframe}"]
+            dataframe[f"plus_di_{inf_dmi_period}_{self.info_timeframe}"]
+            > dataframe[f"minus_di_{inf_dmi_period}_{self.info_timeframe}"]
         )
-        htf_adx = dataframe[f"adx_{self.info_timeframe}"] > self.inf_adx_threshold.value
+        htf_adx = (
+            dataframe[f"adx_{inf_dmi_period}_{self.info_timeframe}"] > self.inf_adx_threshold.value
+        )
         htf_ema = (
-            dataframe[f"ema_fast_{self.info_timeframe}"]
-            > dataframe[f"ema_slow_{self.info_timeframe}"]
+            dataframe[f"ema_{inf_ema_fast_period}_{self.info_timeframe}"]
+            > dataframe[f"ema_{inf_ema_slow_period}_{self.info_timeframe}"]
         )
-        htf_willr = dataframe[f"willr_{self.info_timeframe}"] > self.inf_willr_threshold.value
+        htf_willr = (
+            dataframe[f"willr_{inf_willr_period}_{self.info_timeframe}"]
+            > self.inf_willr_threshold.value
+        )
 
         # Count true conditions
         htf_score = (
@@ -200,29 +243,32 @@ class Strategy10012026_2(IStrategy):
         )
         confirm_trend = htf_score >= 3
 
+        # Select pre-calculated indicators from primary timeframe
+        stochrsi_k = dataframe[f"stochrsi_k_{stochrsi_period}"]
+        stochrsi_d = dataframe[f"stochrsi_d_{stochrsi_period}"]
+        ao = dataframe[f"ao_{ao_fast}_{ao_slow}"]
+        cci = dataframe[f"cci_{cci_period}"]
+        cci2 = dataframe[f"cci_{cci_period2}"]
+        cmf = dataframe[f"cmf_{cmf_period}"]
+
         # StochRSI signal - either oversold bounce or momentum cross
         stoch_signal = (
             # Oversold bounce
-            (dataframe["stochrsi_k"] < self.buy_stochrsi_oversold.value)
-            & (qtpylib.crossed_above(dataframe["stochrsi_k"], dataframe["stochrsi_d"]))
+            (stochrsi_k < self.buy_stochrsi_oversold.value)
+            & (qtpylib.crossed_above(stochrsi_k, stochrsi_d))
         ) | (
             # Momentum cross in mid-range
-            (dataframe["stochrsi_k"] > self.buy_stochrsi_oversold.value)
-            & (dataframe["stochrsi_k"] < 0.7)
-            & (qtpylib.crossed_above(dataframe["stochrsi_k"], dataframe["stochrsi_d"]))
+            (stochrsi_k > self.buy_stochrsi_oversold.value)
+            & (stochrsi_k < 0.7)
+            & (qtpylib.crossed_above(stochrsi_k, stochrsi_d))
         )
 
         # CCI signals - at least one should be favorable
-        cci_signal = (dataframe["cci"] > self.buy_cci_threshold.value) | (
-            dataframe["cci2"] > self.buy_cci_threshold2.value
-        )
+        cci_signal = (cci > self.buy_cci_threshold.value) | (cci2 > self.buy_cci_threshold2.value)
 
         # Core momentum conditions
         momentum_conditions = (
-            stoch_signal
-            & (dataframe["ao"] > 0)
-            & cci_signal
-            & (dataframe["cmf"] > self.buy_cmf_threshold.value)
+            stoch_signal & (ao > 0) & cci_signal & (cmf > self.buy_cmf_threshold.value)
         )
 
         dataframe.loc[confirm_trend & momentum_conditions, "enter_long"] = 1
@@ -230,14 +276,26 @@ class Strategy10012026_2(IStrategy):
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Get current hyperopt parameter values
+        stochrsi_period = self.buy_stochrsi_period.value
+        ao_fast = self.buy_ao_fast.value
+        ao_slow = self.buy_ao_slow.value
+        cci_period = self.buy_cci_period.value
+
+        # Select pre-calculated indicators
+        stochrsi_k = dataframe[f"stochrsi_k_{stochrsi_period}"]
+        stochrsi_d = dataframe[f"stochrsi_d_{stochrsi_period}"]
+        ao = dataframe[f"ao_{ao_fast}_{ao_slow}"]
+        cci = dataframe[f"cci_{cci_period}"]
+
         # Exit conditions based on primary timeframe
-        stoch_exit = (qtpylib.crossed_below(dataframe["stochrsi_k"], dataframe["stochrsi_d"])) & (
-            dataframe["stochrsi_k"] > self.sell_stochrsi_overbought.value
+        stoch_exit = (qtpylib.crossed_below(stochrsi_k, stochrsi_d)) & (
+            stochrsi_k > self.sell_stochrsi_overbought.value
         )
 
-        ao_exit = dataframe["ao"] < 0
+        ao_exit = ao < 0
 
-        cci_exit = dataframe["cci"] < self.sell_cci_threshold.value
+        cci_exit = cci < self.sell_cci_threshold.value
 
         dataframe.loc[stoch_exit | ao_exit | cci_exit, "exit_long"] = 1
 

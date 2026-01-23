@@ -33,6 +33,9 @@ class EMATrendRSIPullback_01(IStrategy):
     - Dynamic RSI thresholds based on EMA spread
     - Trend strength filter using EMA angle
     - Better exit logic with partial exits
+
+    FIXED: Hyperopt parameters now used in populate_entry_trend/populate_exit_trend
+    instead of populate_indicators for proper hyperopt compatibility.
     """
 
     # Strategy interface version
@@ -87,75 +90,85 @@ class EMATrendRSIPullback_01(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Adds several different TA indicators to the given DataFrame
+        Pre-calculate indicators for all possible hyperopt parameter values.
+        This ensures hyperopt works correctly by having all variants available.
         """
 
-        # EMAs
-        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod=self.ema_fast_period.value)
-        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod=self.ema_slow_period.value)
+        # Pre-calculate EMAs for all possible fast periods (15-25)
+        for period in range(15, 26):
+            dataframe[f"ema_fast_{period}"] = ta.EMA(dataframe, timeperiod=period)
 
-        # EMA spread for trend strength
-        dataframe["ema_spread"] = (
-            dataframe["ema_fast"] - dataframe["ema_slow"]
-        ) / dataframe["ema_slow"]
+        # Pre-calculate EMAs for all possible slow periods (40-60)
+        for period in range(40, 61):
+            dataframe[f"ema_slow_{period}"] = ta.EMA(dataframe, timeperiod=period)
 
-        # RSI
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.rsi_period.value)
+        # Pre-calculate RSI for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"rsi_{period}"] = ta.RSI(dataframe, timeperiod=period)
 
-        # Volume
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_ratio"] = dataframe["volume"] / dataframe["volume_ma"]
-
-        # Price position relative to EMAs
-        dataframe["close_above_fast"] = dataframe["close"] > dataframe["ema_fast"]
-        dataframe["close_below_fast"] = dataframe["close"] < dataframe["ema_fast"]
-
-        # EMA trend
-        dataframe["uptrend"] = dataframe["ema_fast"] > dataframe["ema_slow"]
-        dataframe["downtrend"] = dataframe["ema_fast"] < dataframe["ema_slow"]
-
-        # EMA angle for momentum (using 5 period lookback)
-        dataframe["ema_fast_angle"] = (
-            (dataframe["ema_fast"] - dataframe["ema_fast"].shift(5))
-            / dataframe["ema_fast"].shift(5)
-            * 100
-        )
-
-        # Dynamic RSI thresholds based on trend strength
-        dataframe["rsi_buy_dynamic"] = np.where(
-            abs(dataframe["ema_spread"]) > 0.005,
-            self.rsi_buy_threshold.value + 5,  # More strict in strong trends
-            self.rsi_buy_threshold.value,
-        )
-
-        dataframe["rsi_sell_dynamic"] = np.where(
-            abs(dataframe["ema_spread"]) > 0.005,
-            self.rsi_sell_threshold.value - 5,  # More strict in strong trends
-            self.rsi_sell_threshold.value,
-        )
+        # Pre-calculate Volume MA for all possible periods (15-30)
+        for period in range(15, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on TA indicators, populates the entry signals
+        Based on TA indicators, populates the entry signals.
+        Hyperopt parameters are used here so they're evaluated each epoch.
         """
+        # Get hyperopt parameter values
+        ema_fast_period = self.ema_fast_period.value
+        ema_slow_period = self.ema_slow_period.value
+        rsi_period = self.rsi_period.value
+        volume_ma_period = self.volume_ma_period.value
+
+        # Get pre-calculated indicators for current hyperopt values
+        ema_fast = dataframe[f"ema_fast_{ema_fast_period}"]
+        ema_slow = dataframe[f"ema_slow_{ema_slow_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+
+        # Calculate derived values using hyperopt parameters
+        # EMA spread for trend strength
+        ema_spread = (ema_fast - ema_slow) / ema_slow
+
+        # Volume ratio
+        volume_ratio = dataframe["volume"] / volume_ma
+
+        # Price position relative to EMAs
+        close_above_fast = dataframe["close"] > ema_fast
+        close_below_fast = dataframe["close"] < ema_fast
+
+        # EMA trend
+        uptrend = ema_fast > ema_slow
+        downtrend = ema_fast < ema_slow
+
+        # EMA angle for momentum (using 5 period lookback)
+        ema_fast_angle = (ema_fast - ema_fast.shift(5)) / ema_fast.shift(5) * 100
+
+        # Dynamic RSI thresholds based on trend strength
+        rsi_buy_dynamic = np.where(
+            abs(ema_spread) > 0.005,
+            self.rsi_buy_threshold.value + 5,  # More strict in strong trends
+            self.rsi_buy_threshold.value,
+        )
+
+        rsi_sell_dynamic = np.where(
+            abs(ema_spread) > 0.005,
+            self.rsi_sell_threshold.value - 5,  # More strict in strong trends
+            self.rsi_sell_threshold.value,
+        )
 
         # LONG ENTRY
         dataframe.loc[
             (
-                (dataframe["uptrend"])  # Uptrend
-                & (dataframe["rsi"] < dataframe["rsi_buy_dynamic"])  # RSI pullback
-                & (dataframe["close_above_fast"])  # Price above fast EMA
-                & (
-                    abs(dataframe["ema_spread"]) > self.ema_spread_min.value
-                )  # Sufficient trend strength
-                & (
-                    dataframe["volume_ratio"] > self.volume_threshold.value
-                )  # Volume confirmation
-                & (dataframe["ema_fast_angle"] > 0.1)  # Positive momentum
+                (uptrend)  # Uptrend
+                & (rsi < rsi_buy_dynamic)  # RSI pullback
+                & (close_above_fast)  # Price above fast EMA
+                & (abs(ema_spread) > self.ema_spread_min.value)  # Sufficient trend strength
+                & (volume_ratio > self.volume_threshold.value)  # Volume confirmation
+                & (ema_fast_angle > 0.1)  # Positive momentum
             ),
             "enter_long",
         ] = 1
@@ -163,16 +176,12 @@ class EMATrendRSIPullback_01(IStrategy):
         # SHORT ENTRY
         dataframe.loc[
             (
-                (dataframe["downtrend"])  # Downtrend
-                & (dataframe["rsi"] > dataframe["rsi_sell_dynamic"])  # RSI pullback up
-                & (dataframe["close_below_fast"])  # Price below fast EMA
-                & (
-                    abs(dataframe["ema_spread"]) > self.ema_spread_min.value
-                )  # Sufficient trend strength
-                & (
-                    dataframe["volume_ratio"] > self.volume_threshold.value
-                )  # Volume confirmation
-                & (dataframe["ema_fast_angle"] < -0.1)  # Negative momentum
+                (downtrend)  # Downtrend
+                & (rsi > rsi_sell_dynamic)  # RSI pullback up
+                & (close_below_fast)  # Price below fast EMA
+                & (abs(ema_spread) > self.ema_spread_min.value)  # Sufficient trend strength
+                & (volume_ratio > self.volume_threshold.value)  # Volume confirmation
+                & (ema_fast_angle < -0.1)  # Negative momentum
             ),
             "enter_short",
         ] = 1
@@ -181,16 +190,33 @@ class EMATrendRSIPullback_01(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on TA indicators, populates the exit signals
+        Based on TA indicators, populates the exit signals.
+        Hyperopt parameters are used here so they're evaluated each epoch.
         """
+        # Get hyperopt parameter values
+        ema_fast_period = self.ema_fast_period.value
+        ema_slow_period = self.ema_slow_period.value
+        rsi_period = self.rsi_period.value
+
+        # Get pre-calculated indicators for current hyperopt values
+        ema_fast = dataframe[f"ema_fast_{ema_fast_period}"]
+        ema_slow = dataframe[f"ema_slow_{ema_slow_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+
+        # Calculate derived values
+        close_above_fast = dataframe["close"] > ema_fast
+        close_below_fast = dataframe["close"] < ema_fast
+        uptrend = ema_fast > ema_slow
+        downtrend = ema_fast < ema_slow
+        ema_fast_angle = (ema_fast - ema_fast.shift(5)) / ema_fast.shift(5) * 100
 
         # LONG EXIT
         dataframe.loc[
             (
-                (dataframe["rsi"] > self.rsi_exit_long.value)  # Mean reversion reached
-                | (dataframe["close_below_fast"])  # Loss of momentum
-                | (dataframe["downtrend"])  # Trend reversal
-                | (dataframe["ema_fast_angle"] < -0.2)  # Strong negative momentum
+                (rsi > self.rsi_exit_long.value)  # Mean reversion reached
+                | (close_below_fast)  # Loss of momentum
+                | (downtrend)  # Trend reversal
+                | (ema_fast_angle < -0.2)  # Strong negative momentum
             ),
             "exit_long",
         ] = 1
@@ -198,10 +224,10 @@ class EMATrendRSIPullback_01(IStrategy):
         # SHORT EXIT
         dataframe.loc[
             (
-                (dataframe["rsi"] < self.rsi_exit_short.value)  # Mean reversion reached
-                | (dataframe["close_above_fast"])  # Loss of momentum
-                | (dataframe["uptrend"])  # Trend reversal
-                | (dataframe["ema_fast_angle"] > 0.2)  # Strong positive momentum
+                (rsi < self.rsi_exit_short.value)  # Mean reversion reached
+                | (close_above_fast)  # Loss of momentum
+                | (uptrend)  # Trend reversal
+                | (ema_fast_angle > 0.2)  # Strong positive momentum
             ),
             "exit_short",
         ] = 1
@@ -224,16 +250,28 @@ class EMATrendRSIPullback_01(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get hyperopt parameter values
+        ema_fast_period = self.ema_fast_period.value
+        ema_slow_period = self.ema_slow_period.value
+        rsi_period = self.rsi_period.value
+
+        ema_fast = last_candle[f"ema_fast_{ema_fast_period}"]
+        ema_slow = last_candle[f"ema_slow_{ema_slow_period}"]
+        rsi = last_candle[f"rsi_{rsi_period}"]
+
+        # EMA spread
+        ema_spread = (ema_fast - ema_slow) / ema_slow
+
         # Exit if trend becomes too weak
-        if abs(last_candle["ema_spread"]) < 0.001:
+        if abs(ema_spread) < 0.001:
             return "trend_too_weak"
 
         # Exit long if RSI becomes extremely overbought
-        if trade.is_short == False and last_candle["rsi"] > 75:
+        if trade.is_short == False and rsi > 75:
             return "rsi_extreme_overbought"
 
         # Exit short if RSI becomes extremely oversold
-        if trade.is_short == True and last_candle["rsi"] < 25:
+        if trade.is_short == True and rsi < 25:
             return "rsi_extreme_oversold"
 
         # Time-based exit if trade is stuck

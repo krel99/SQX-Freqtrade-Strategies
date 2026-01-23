@@ -108,94 +108,38 @@ class TripleEMATrend_09(IStrategy):
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Adds several different TA indicators to the given DataFrame
+        Pre-calculates all indicator variants for hyperopt compatibility.
         """
 
-        # Three EMAs
-        dataframe["ema9"] = ta.EMA(dataframe, timeperiod=self.ema_fast_period.value)
-        dataframe["ema21"] = ta.EMA(dataframe, timeperiod=self.ema_mid_period.value)
-        dataframe["ema55"] = ta.EMA(dataframe, timeperiod=self.ema_slow_period.value)
+        # Pre-calculate EMAs for all possible periods
+        # ema_fast_period: 7-12, ema_mid_period: 18-25, ema_slow_period: 50-60
+        for period in range(7, 13):
+            dataframe[f"ema_fast_{period}"] = ta.EMA(dataframe, timeperiod=period)
+        for period in range(18, 26):
+            dataframe[f"ema_mid_{period}"] = ta.EMA(dataframe, timeperiod=period)
+        for period in range(50, 61):
+            dataframe[f"ema_slow_{period}"] = ta.EMA(dataframe, timeperiod=period)
 
-        # EMA alignment
-        dataframe["bullish_alignment"] = (dataframe["ema9"] > dataframe["ema21"]) & (
-            dataframe["ema21"] > dataframe["ema55"]
-        )
-        dataframe["bearish_alignment"] = (dataframe["ema9"] < dataframe["ema21"]) & (
-            dataframe["ema21"] < dataframe["ema55"]
-        )
+        # Pre-calculate ADX for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"adx_{period}"] = ta.ADX(dataframe, timeperiod=period)
 
-        # EMA slopes for momentum
-        for ema in ["ema9", "ema21", "ema55"]:
-            dataframe[f"{ema}_slope"] = (
-                (dataframe[ema] - dataframe[ema].shift(5))
-                / dataframe[ema].shift(5)
-                * 100
-            )
+        # Pre-calculate RSI for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"rsi_{period}"] = ta.RSI(dataframe, timeperiod=period)
 
-        # Distance between EMAs (trend strength)
-        dataframe["ema_spread_fast_mid"] = (
-            (dataframe["ema9"] - dataframe["ema21"]) / dataframe["ema21"] * 100
-        )
-        dataframe["ema_spread_mid_slow"] = (
-            (dataframe["ema21"] - dataframe["ema55"]) / dataframe["ema55"] * 100
-        )
+        # Pre-calculate Volume MA for all possible periods (15-30)
+        for period in range(15, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
-        # EMA21 touch detection with wicks
-        dataframe["ema21_touch"] = (
-            (
-                abs(dataframe["close"] - dataframe["ema21"]) / dataframe["ema21"]
-                < self.touch_threshold.value
-            )
-            | (
-                abs(dataframe["high"] - dataframe["ema21"]) / dataframe["ema21"]
-                < self.touch_threshold.value
-            )
-            | (
-                abs(dataframe["low"] - dataframe["ema21"]) / dataframe["ema21"]
-                < self.touch_threshold.value
-            )
-        )
+        # Pre-calculate ATR for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        # Bullish/Bearish rejection from EMA21
-        dataframe["bullish_rejection"] = (
-            (dataframe["low"] <= dataframe["ema21"])  # Low touches or pierces EMA21
-            & (dataframe["close"] > dataframe["ema21"])  # Close above EMA21
-            & (dataframe["close"] > dataframe["open"])  # Bullish candle
-        )
-
-        dataframe["bearish_rejection"] = (
-            (dataframe["high"] >= dataframe["ema21"])  # High touches or pierces EMA21
-            & (dataframe["close"] < dataframe["ema21"])  # Close below EMA21
-            & (dataframe["close"] < dataframe["open"])  # Bearish candle
-        )
-
-        # ADX for trend strength
-        dataframe["adx"] = ta.ADX(dataframe, timeperiod=self.adx_period.value)
-
-        # RSI
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.rsi_period.value)
-
-        # RSI divergence (simplified)
+        # RSI divergence lookback (fixed)
         lookback = 10
         dataframe["price_lower"] = dataframe["low"] < dataframe["low"].shift(lookback)
-        dataframe["rsi_higher"] = dataframe["rsi"] > dataframe["rsi"].shift(lookback)
-        dataframe["bullish_div"] = dataframe["price_lower"] & dataframe["rsi_higher"]
-
-        dataframe["price_higher"] = dataframe["high"] > dataframe["high"].shift(
-            lookback
-        )
-        dataframe["rsi_lower"] = dataframe["rsi"] < dataframe["rsi"].shift(lookback)
-        dataframe["bearish_div"] = dataframe["price_higher"] & dataframe["rsi_lower"]
-
-        # Volume
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_ok"] = dataframe["volume"] >= (
-            dataframe["volume_ma"] * self.volume_threshold.value
-        )
-
-        # ATR for volatility
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
+        dataframe["price_higher"] = dataframe["high"] > dataframe["high"].shift(lookback)
 
         # Candle patterns
         dataframe["hammer"] = ta.CDLHAMMER(dataframe)
@@ -205,33 +149,8 @@ class TripleEMATrend_09(IStrategy):
 
         # Price momentum
         dataframe["momentum"] = (
-            (dataframe["close"] - dataframe["close"].shift(5))
-            / dataframe["close"].shift(5)
-            * 100
+            (dataframe["close"] - dataframe["close"].shift(5)) / dataframe["close"].shift(5) * 100
         )
-
-        # Position relative to EMAs
-        dataframe["above_ema9"] = dataframe["close"] > dataframe["ema9"]
-        dataframe["below_ema9"] = dataframe["close"] < dataframe["ema9"]
-        dataframe["above_ema21"] = dataframe["close"] > dataframe["ema21"]
-        dataframe["below_ema21"] = dataframe["close"] < dataframe["ema21"]
-
-        # Count bars since EMA cross
-        dataframe["bars_since_cross"] = 0
-        cross_up = (dataframe["ema9"] > dataframe["ema21"]) & (
-            dataframe["ema9"].shift(1) <= dataframe["ema21"].shift(1)
-        )
-        cross_down = (dataframe["ema9"] < dataframe["ema21"]) & (
-            dataframe["ema9"].shift(1) >= dataframe["ema21"].shift(1)
-        )
-
-        bars_count = 0
-        for i in range(len(dataframe)):
-            if cross_up.iloc[i] or cross_down.iloc[i]:
-                bars_count = 0
-            else:
-                bars_count += 1
-            dataframe.loc[i, "bars_since_cross"] = bars_count
 
         return dataframe
 
@@ -240,54 +159,116 @@ class TripleEMATrend_09(IStrategy):
         Based on TA indicators, populates the entry signals
         """
 
-        # LONG: strong uptrend alignment and pullback to EMA21
+        # Get current hyperopt parameter values
+        ema_fast_period = self.ema_fast_period.value
+        ema_mid_period = self.ema_mid_period.value
+        ema_slow_period = self.ema_slow_period.value
+        touch_threshold = self.touch_threshold.value
+        adx_period = self.adx_period.value
+        adx_min = self.adx_min.value
+        rsi_period = self.rsi_period.value
+        rsi_min_long = self.rsi_min_long.value
+        rsi_max_short = self.rsi_max_short.value
+        volume_ma_period = self.volume_ma_period.value
+        volume_threshold = self.volume_threshold.value
+
+        # Select pre-calculated indicators
+        ema_fast = dataframe[f"ema_fast_{ema_fast_period}"]
+        ema_mid = dataframe[f"ema_mid_{ema_mid_period}"]
+        ema_slow = dataframe[f"ema_slow_{ema_slow_period}"]
+        adx = dataframe[f"adx_{adx_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+
+        # Calculate derived indicators
+        bullish_alignment = (ema_fast > ema_mid) & (ema_mid > ema_slow)
+        bearish_alignment = (ema_fast < ema_mid) & (ema_mid < ema_slow)
+
+        # EMA mid touch detection with wicks
+        ema_mid_touch = (
+            (abs(dataframe["close"] - ema_mid) / ema_mid < touch_threshold)
+            | (abs(dataframe["high"] - ema_mid) / ema_mid < touch_threshold)
+            | (abs(dataframe["low"] - ema_mid) / ema_mid < touch_threshold)
+        )
+
+        # Bullish/Bearish rejection from EMA mid
+        bullish_rejection = (
+            (dataframe["low"] <= ema_mid)  # Low touches or pierces EMA
+            & (dataframe["close"] > ema_mid)  # Close above EMA
+            & (dataframe["close"] > dataframe["open"])  # Bullish candle
+        )
+
+        bearish_rejection = (
+            (dataframe["high"] >= ema_mid)  # High touches or pierces EMA
+            & (dataframe["close"] < ema_mid)  # Close below EMA
+            & (dataframe["close"] < dataframe["open"])  # Bearish candle
+        )
+
+        # Volume check
+        volume_ok = dataframe["volume"] >= (volume_ma * volume_threshold)
+
+        # Position relative to EMAs
+        above_ema_fast = dataframe["close"] > ema_fast
+        below_ema_fast = dataframe["close"] < ema_fast
+        above_ema_mid = dataframe["close"] > ema_mid
+        below_ema_mid = dataframe["close"] < ema_mid
+
+        # EMA slopes
+        ema_fast_slope = (ema_fast - ema_fast.shift(5)) / ema_fast.shift(5) * 100
+        ema_mid_slope = (ema_mid - ema_mid.shift(5)) / ema_mid.shift(5) * 100
+
+        # RSI divergence
+        lookback = 10
+        rsi_higher = rsi > rsi.shift(lookback)
+        rsi_lower = rsi < rsi.shift(lookback)
+        bullish_div = dataframe["price_lower"] & rsi_higher
+        bearish_div = dataframe["price_higher"] & rsi_lower
+
+        # EMA spread (trend strength)
+        ema_spread_fast_mid = (ema_fast - ema_mid) / ema_mid * 100
+
+        # LONG: strong uptrend alignment and pullback to EMA mid
         dataframe.loc[
             (
-                (dataframe["bullish_alignment"])  # EMAs aligned bullishly
+                (bullish_alignment)  # EMAs aligned bullishly
                 & (
-                    (dataframe["bullish_rejection"])  # Price rejects from EMA21
-                    | (
-                        dataframe["ema21_touch"] & dataframe["above_ema21"]
-                    )  # Or touches and holds
+                    (bullish_rejection)  # Price rejects from EMA mid
+                    | (ema_mid_touch & above_ema_mid)  # Or touches and holds
                 )
-                & (dataframe["adx"] > self.adx_min.value)  # Strong trend
-                & (dataframe["rsi"] > self.rsi_min_long.value)  # Not oversold
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["ema9_slope"] > 0.1)  # Fast EMA rising
-                & (dataframe["ema21_slope"] > 0)  # Mid EMA rising
-                & (dataframe["ema_spread_fast_mid"] > 0.1)  # Good separation
-                & (dataframe["bars_since_cross"] > 3)  # Not right after cross
+                & (adx > adx_min)  # Strong trend
+                & (rsi > rsi_min_long)  # Not oversold
+                & (volume_ok)  # Volume confirmation
+                & (ema_fast_slope > 0.1)  # Fast EMA rising
+                & (ema_mid_slope > 0)  # Mid EMA rising
+                & (ema_spread_fast_mid > 0.1)  # Good separation
                 & (
                     (dataframe["hammer"] > 0)  # Candle pattern confirmation
                     | (dataframe["bullish_engulfing"] > 0)
-                    | (dataframe["bullish_div"])  # Or divergence
+                    | (bullish_div)  # Or divergence
                     | (dataframe["momentum"] > 0)  # Or positive momentum
                 )
             ),
             "enter_long",
         ] = 1
 
-        # SHORT: strong downtrend alignment and pullback to EMA21
+        # SHORT: strong downtrend alignment and pullback to EMA mid
         dataframe.loc[
             (
-                (dataframe["bearish_alignment"])  # EMAs aligned bearishly
+                (bearish_alignment)  # EMAs aligned bearishly
                 & (
-                    (dataframe["bearish_rejection"])  # Price rejects from EMA21
-                    | (
-                        dataframe["ema21_touch"] & dataframe["below_ema21"]
-                    )  # Or touches and holds
+                    (bearish_rejection)  # Price rejects from EMA mid
+                    | (ema_mid_touch & below_ema_mid)  # Or touches and holds
                 )
-                & (dataframe["adx"] > self.adx_min.value)  # Strong trend
-                & (dataframe["rsi"] < self.rsi_max_short.value)  # Not overbought
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["ema9_slope"] < -0.1)  # Fast EMA falling
-                & (dataframe["ema21_slope"] < 0)  # Mid EMA falling
-                & (dataframe["ema_spread_fast_mid"] < -0.1)  # Good separation
-                & (dataframe["bars_since_cross"] > 3)  # Not right after cross
+                & (adx > adx_min)  # Strong trend
+                & (rsi < rsi_max_short)  # Not overbought
+                & (volume_ok)  # Volume confirmation
+                & (ema_fast_slope < -0.1)  # Fast EMA falling
+                & (ema_mid_slope < 0)  # Mid EMA falling
+                & (ema_spread_fast_mid < -0.1)  # Good separation
                 & (
                     (dataframe["shooting_star"] < 0)  # Candle pattern confirmation
                     | (dataframe["bearish_engulfing"] > 0)
-                    | (dataframe["bearish_div"])  # Or divergence
+                    | (bearish_div)  # Or divergence
                     | (dataframe["momentum"] < 0)  # Or negative momentum
                 )
             ),
@@ -301,16 +282,39 @@ class TripleEMATrend_09(IStrategy):
         Based on TA indicators, populates the exit signals
         """
 
+        # Get current hyperopt parameter values
+        ema_fast_period = self.ema_fast_period.value
+        ema_mid_period = self.ema_mid_period.value
+        ema_slow_period = self.ema_slow_period.value
+        rsi_period = self.rsi_period.value
+        ema_fast_exit_distance = self.ema_fast_exit_distance.value
+
+        # Select pre-calculated indicators
+        ema_fast = dataframe[f"ema_fast_{ema_fast_period}"]
+        ema_mid = dataframe[f"ema_mid_{ema_mid_period}"]
+        ema_slow = dataframe[f"ema_slow_{ema_slow_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+
+        # Calculate derived indicators
+        bullish_alignment = (ema_fast > ema_mid) & (ema_mid > ema_slow)
+        bearish_alignment = (ema_fast < ema_mid) & (ema_mid < ema_slow)
+
+        # Position relative to EMAs
+        above_ema_fast = dataframe["close"] > ema_fast
+        below_ema_fast = dataframe["close"] < ema_fast
+
+        # EMA slope
+        ema_fast_slope = (ema_fast - ema_fast.shift(5)) / ema_fast.shift(5) * 100
+
         # LONG EXIT
         dataframe.loc[
             (
-                (dataframe["below_ema9"])  # Price breaks below fast EMA
-                | (~dataframe["bullish_alignment"])  # Lost alignment
-                | (dataframe["ema9_slope"] < -0.2)  # Fast EMA turning down strongly
-                | (dataframe["rsi"] > 75)  # Overbought
+                (below_ema_fast)  # Price breaks below fast EMA
+                | (~bullish_alignment)  # Lost alignment
+                | (ema_fast_slope < -0.2)  # Fast EMA turning down strongly
+                | (rsi > 75)  # Overbought
                 | (
-                    abs(dataframe["close"] - dataframe["ema9"])
-                    > dataframe["close"] * self.ema_fast_exit_distance.value
+                    abs(dataframe["close"] - ema_fast) > dataframe["close"] * ema_fast_exit_distance
                 )  # Too far from fast EMA
                 | (dataframe["bearish_engulfing"] > 0)  # Strong reversal pattern
             ),
@@ -320,13 +324,12 @@ class TripleEMATrend_09(IStrategy):
         # SHORT EXIT
         dataframe.loc[
             (
-                (dataframe["above_ema9"])  # Price breaks above fast EMA
-                | (~dataframe["bearish_alignment"])  # Lost alignment
-                | (dataframe["ema9_slope"] > 0.2)  # Fast EMA turning up strongly
-                | (dataframe["rsi"] < 25)  # Oversold
+                (above_ema_fast)  # Price breaks above fast EMA
+                | (~bearish_alignment)  # Lost alignment
+                | (ema_fast_slope > 0.2)  # Fast EMA turning up strongly
+                | (rsi < 25)  # Oversold
                 | (
-                    abs(dataframe["close"] - dataframe["ema9"])
-                    > dataframe["close"] * self.ema_fast_exit_distance.value
+                    abs(dataframe["close"] - ema_fast) > dataframe["close"] * ema_fast_exit_distance
                 )  # Too far from fast EMA
                 | (dataframe["bullish_engulfing"] > 0)  # Strong reversal pattern
             ),
@@ -351,18 +354,32 @@ class TripleEMATrend_09(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        ema_fast_period = self.ema_fast_period.value
+        ema_mid_period = self.ema_mid_period.value
+        ema_slow_period = self.ema_slow_period.value
+
+        # Get pre-calculated indicators
+        ema_fast = last_candle[f"ema_fast_{ema_fast_period}"]
+        ema_mid = last_candle[f"ema_mid_{ema_mid_period}"]
+        ema_slow = last_candle[f"ema_slow_{ema_slow_period}"]
+
+        # Calculate alignment
+        bullish_alignment = (ema_fast > ema_mid) and (ema_mid > ema_slow)
+        bearish_alignment = (ema_fast < ema_mid) and (ema_mid < ema_slow)
+
         # Take profit at target
         if current_profit >= self.profit_target.value:
             return "profit_target_reached"
 
         # Exit if alignment is lost
-        if not trade.is_short and not last_candle["bullish_alignment"]:
+        if not trade.is_short and not bullish_alignment:
             if current_profit > 0.005:
                 return "alignment_lost_profit"
             elif current_profit > -0.005:
                 return "alignment_lost_small"
 
-        if trade.is_short and not last_candle["bearish_alignment"]:
+        if trade.is_short and not bearish_alignment:
             if current_profit > 0.005:
                 return "alignment_lost_profit"
             elif current_profit > -0.005:

@@ -117,82 +117,37 @@ class KeltnerATRBreakout_10(IStrategy):
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Adds several different TA indicators to the given DataFrame
+        Pre-calculates all indicator variants for hyperopt compatibility.
         """
 
-        # EMA for Keltner Channel midline
-        dataframe["ema"] = ta.EMA(dataframe, timeperiod=self.ema_period.value)
+        # Pre-calculate EMA for all possible periods (15-25)
+        for period in range(15, 26):
+            dataframe[f"ema_{period}"] = ta.EMA(dataframe, timeperiod=period)
 
-        # ATR for Keltner Channel bands
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
-        dataframe["atr_ma"] = ta.SMA(dataframe["atr"], timeperiod=20)
+        # Pre-calculate ATR for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        # Calculate dynamic multiplier based on volatility
-        dataframe["volatility_ratio"] = dataframe["atr"] / dataframe["atr_ma"]
-        dataframe["kc_mult_dynamic"] = (
-            self.kc_mult_base.value * dataframe["volatility_ratio"]
-        )
+        # ATR MA (using default ATR period 14 for base calculation)
+        dataframe["atr_ma"] = ta.SMA(dataframe["atr_14"], timeperiod=20)
 
-        # Keltner Channels
-        dataframe["kc_upper"] = dataframe["ema"] + (
-            dataframe["kc_mult_dynamic"] * dataframe["atr"]
-        )
-        dataframe["kc_lower"] = dataframe["ema"] - (
-            dataframe["kc_mult_dynamic"] * dataframe["atr"]
-        )
+        # Pre-calculate RSI for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"rsi_{period}"] = ta.RSI(dataframe, timeperiod=period)
 
-        # Channel width
-        dataframe["kc_width"] = dataframe["kc_upper"] - dataframe["kc_lower"]
-        dataframe["kc_width_pct"] = (dataframe["kc_width"] / dataframe["ema"]) * 100
+        # Pre-calculate ROC for all possible periods (5-15)
+        for period in range(5, 16):
+            dataframe[f"roc_{period}"] = (
+                dataframe["close"] / dataframe["close"].shift(period) - 1
+            ) * 100
 
-        # Price position within channel
-        dataframe["kc_position"] = (dataframe["close"] - dataframe["kc_lower"]) / (
-            dataframe["kc_width"]
-        )
+        # Pre-calculate Volume MA for all possible periods (15-30)
+        for period in range(15, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
-        # Detect breakouts
-        dataframe["close_above_upper"] = dataframe["close"] > dataframe["kc_upper"]
-        dataframe["close_below_lower"] = dataframe["close"] < dataframe["kc_lower"]
-
-        # First close above/below band
-        dataframe["breakout_up"] = dataframe["close_above_upper"] & (
-            dataframe["close_above_upper"].shift(1) == False
-        )
-        dataframe["breakout_down"] = dataframe["close_below_lower"] & (
-            dataframe["close_below_lower"].shift(1) == False
-        )
-
-        # Sustained breakout (multiple candles)
-        dataframe["sustained_breakout_up"] = (
-            dataframe["close_above_upper"]
-            .rolling(window=self.breakout_candles.value)
-            .min()
-            == 1
-        )
-        dataframe["sustained_breakout_down"] = (
-            dataframe["close_below_lower"]
-            .rolling(window=self.breakout_candles.value)
-            .min()
-            == 1
-        )
-
-        # RSI
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.rsi_period.value)
-
-        # Rate of Change (momentum)
-        dataframe["roc"] = (
-            dataframe["close"] / dataframe["close"].shift(self.roc_period.value) - 1
-        ) * 100
-
-        # Volume
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_surge"] = dataframe["volume"] > (
-            dataframe["volume_ma"] * self.volume_surge_mult.value
-        )
-
-        # ADX for trend strength
-        dataframe["adx"] = ta.ADX(dataframe, timeperiod=self.adx_period.value)
+        # Pre-calculate ADX for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"adx_{period}"] = ta.ADX(dataframe, timeperiod=period)
 
         # Bollinger Bands for volatility comparison
         bb = ta.BBANDS(dataframe, timeperiod=20, nbdevup=2.0, nbdevdn=2.0)
@@ -200,41 +155,10 @@ class KeltnerATRBreakout_10(IStrategy):
         dataframe["bb_lower"] = bb["lowerband"]
         dataframe["bb_width"] = dataframe["bb_upper"] - dataframe["bb_lower"]
 
-        # Volatility squeeze detection (KC inside BB = low volatility)
-        dataframe["squeeze"] = (dataframe["kc_upper"] < dataframe["bb_upper"]) & (
-            dataframe["kc_lower"] > dataframe["bb_lower"]
-        )
-        dataframe["squeeze_release"] = (~dataframe["squeeze"]) & dataframe[
-            "squeeze"
-        ].shift(1)
-
-        # Trend determination
-        dataframe["uptrend"] = dataframe["close"] > dataframe["ema"]
-        dataframe["downtrend"] = dataframe["close"] < dataframe["ema"]
-
-        # EMA slope for momentum
-        dataframe["ema_slope"] = (
-            (dataframe["ema"] - dataframe["ema"].shift(5))
-            / dataframe["ema"].shift(5)
-            * 100
-        )
-
-        # False breakout detection
-        lookback = 3
-        dataframe["false_breakout_up"] = (
-            dataframe["breakout_up"].rolling(window=lookback).max() == 1
-        ) & (dataframe["close"] < dataframe["kc_upper"])
-
-        dataframe["false_breakout_down"] = (
-            dataframe["breakout_down"].rolling(window=lookback).max() == 1
-        ) & (dataframe["close"] > dataframe["kc_lower"])
-
         # Candle strength
         dataframe["candle_body"] = abs(dataframe["close"] - dataframe["open"])
         dataframe["candle_range"] = dataframe["high"] - dataframe["low"]
-        dataframe["strong_candle"] = (
-            dataframe["candle_body"] > dataframe["candle_range"] * 0.6
-        )
+        dataframe["strong_candle"] = dataframe["candle_body"] > dataframe["candle_range"] * 0.6
 
         # Calculate highest/lowest since entry (for trailing stop simulation)
         dataframe["highest_20"] = dataframe["high"].rolling(window=20).max()
@@ -247,6 +171,71 @@ class KeltnerATRBreakout_10(IStrategy):
         Based on TA indicators, populates the entry signals
         """
 
+        # Get current hyperopt parameter values
+        ema_period = self.ema_period.value
+        atr_period = self.atr_period.value
+        kc_mult_base = self.kc_mult_base.value
+        breakout_candles = self.breakout_candles.value
+        rsi_period = self.rsi_period.value
+        roc_period = self.roc_period.value
+        volume_ma_period = self.volume_ma_period.value
+        volume_surge_mult = self.volume_surge_mult.value
+        adx_period = self.adx_period.value
+
+        # Select pre-calculated indicators
+        ema = dataframe[f"ema_{ema_period}"]
+        atr = dataframe[f"atr_{atr_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+        roc = dataframe[f"roc_{roc_period}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+        adx = dataframe[f"adx_{adx_period}"]
+
+        # Calculate dynamic multiplier based on volatility
+        volatility_ratio = atr / dataframe["atr_ma"]
+        kc_mult_dynamic = kc_mult_base * volatility_ratio
+
+        # Keltner Channels
+        kc_upper = ema + (kc_mult_dynamic * atr)
+        kc_lower = ema - (kc_mult_dynamic * atr)
+
+        # Channel width
+        kc_width = kc_upper - kc_lower
+
+        # Detect breakouts
+        close_above_upper = dataframe["close"] > kc_upper
+        close_below_lower = dataframe["close"] < kc_lower
+
+        # First close above/below band
+        breakout_up = close_above_upper & (close_above_upper.shift(1) == False)
+        breakout_down = close_below_lower & (close_below_lower.shift(1) == False)
+
+        # Sustained breakout (multiple candles)
+        sustained_breakout_up = close_above_upper.rolling(window=breakout_candles).min() == 1
+        sustained_breakout_down = close_below_lower.rolling(window=breakout_candles).min() == 1
+
+        # Volume surge
+        volume_surge = dataframe["volume"] > (volume_ma * volume_surge_mult)
+
+        # Volatility squeeze detection (KC inside BB = low volatility)
+        squeeze = (kc_upper < dataframe["bb_upper"]) & (kc_lower > dataframe["bb_lower"])
+        squeeze_release = (~squeeze) & squeeze.shift(1)
+
+        # Trend determination
+        uptrend = dataframe["close"] > ema
+        downtrend = dataframe["close"] < ema
+
+        # EMA slope for momentum
+        ema_slope = (ema - ema.shift(5)) / ema.shift(5) * 100
+
+        # False breakout detection
+        lookback = 3
+        false_breakout_up = (breakout_up.rolling(window=lookback).max() == 1) & (
+            dataframe["close"] < kc_upper
+        )
+        false_breakout_down = (breakout_down.rolling(window=lookback).max() == 1) & (
+            dataframe["close"] > kc_lower
+        )
+
         # LONG breakout
         dataframe.loc[
             (
@@ -257,14 +246,10 @@ class KeltnerATRBreakout_10(IStrategy):
                 & (dataframe["rsi"] < self.rsi_max_long.value)  # Not overbought
                 & (dataframe["roc"] > self.roc_threshold.value)  # Positive momentum
                 & (dataframe["adx"] > self.adx_min.value)  # Trending market
-                & (
-                    dataframe["false_breakout_up"].shift(1) == False
-                )  # No recent false breakout
+                & (dataframe["false_breakout_up"].shift(1) == False)  # No recent false breakout
                 & (dataframe["strong_candle"])  # Strong breakout candle
                 & (dataframe["ema_slope"] > 0)  # EMA trending up
-                & (
-                    dataframe["kc_width_pct"] > 1.0
-                )  # Channel wide enough (not compressed)
+                & (dataframe["kc_width_pct"] > 1.0)  # Channel wide enough (not compressed)
                 & (
                     dataframe["squeeze_release"]
                     | ~dataframe["squeeze"]
@@ -284,14 +269,10 @@ class KeltnerATRBreakout_10(IStrategy):
                 & (dataframe["rsi"] > self.rsi_min_short.value)  # Not oversold
                 & (dataframe["roc"] < -self.roc_threshold.value)  # Negative momentum
                 & (dataframe["adx"] > self.adx_min.value)  # Trending market
-                & (
-                    dataframe["false_breakout_down"].shift(1) == False
-                )  # No recent false breakout
+                & (dataframe["false_breakout_down"].shift(1) == False)  # No recent false breakout
                 & (dataframe["strong_candle"])  # Strong breakout candle
                 & (dataframe["ema_slope"] < 0)  # EMA trending down
-                & (
-                    dataframe["kc_width_pct"] > 1.0
-                )  # Channel wide enough (not compressed)
+                & (dataframe["kc_width_pct"] > 1.0)  # Channel wide enough (not compressed)
                 & (
                     dataframe["squeeze_release"]
                     | ~dataframe["squeeze"]
@@ -414,9 +395,7 @@ class KeltnerATRBreakout_10(IStrategy):
             if current_rate < trail_stop and current_profit > 0.01:
                 return "atr_trail_stop"
         else:
-            trail_stop = last_candle["lowest_20"] + (
-                last_candle["atr"] * self.atr_trail_mult.value
-            )
+            trail_stop = last_candle["lowest_20"] + (last_candle["atr"] * self.atr_trail_mult.value)
             if current_rate > trail_stop and current_profit > 0.01:
                 return "atr_trail_stop"
 

@@ -95,75 +95,105 @@ class Strategy10012026_3(IStrategy):
     sell_take_profit_atr_mult = DecimalParameter(1.5, 5.0, default=3.0, space="sell")
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Main RSI
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.buy_rsi_period.value)
+        """
+        Pre-calculates all indicator variants for hyperopt compatibility.
+        """
+        # Pre-calculate RSI for all periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"rsi_{period}"] = ta.RSI(dataframe, timeperiod=period)
 
-        # RSI Bollinger Bands 1
-        rsi_bb1 = qtpylib.bollinger_bands(
-            dataframe["rsi"], window=self.buy_rsi_bb_period.value, stds=self.buy_rsi_bb_stddev.value
-        )
-        dataframe["rsi_bb1_lower"] = rsi_bb1["lower"]
-        dataframe["rsi_bb1_upper"] = rsi_bb1["upper"]
+        # Pre-calculate EMAs for all periods (10-150 covers all EMA params)
+        for period in range(10, 151):
+            dataframe[f"ema_{period}"] = ta.EMA(dataframe, timeperiod=period)
 
-        # RSI Bollinger Bands 2
-        rsi_bb2 = qtpylib.bollinger_bands(
-            dataframe["rsi"],
-            window=self.buy_rsi_bb_period2.value,
-            stds=self.buy_rsi_bb_stddev2.value,
-        )
-        dataframe["rsi_bb2_lower"] = rsi_bb2["lower"]
-        dataframe["rsi_bb2_upper"] = rsi_bb2["upper"]
+        # Pre-calculate ATR for all periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        # EMAs
-        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod=self.buy_ema_fast_period.value)
-        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod=self.buy_ema_slow_period.value)
-        dataframe["ema_trend"] = ta.EMA(dataframe, timeperiod=self.buy_ema_trend_period.value)
+        # Pre-calculate MFI for all periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"mfi_{period}"] = ta.MFI(dataframe, timeperiod=period)
 
-        # ATR
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.buy_atr_period.value)
+        # Pre-calculate CCI for all periods (10-40)
+        for period in range(10, 41):
+            dataframe[f"cci_{period}"] = ta.CCI(dataframe, timeperiod=period)
 
-        # Parabolic SAR
-        dataframe["sar"] = ta.SAR(
-            dataframe, acceleration=self.buy_sar_accel.value, maximum=self.buy_sar_max.value
-        )
+        # Pre-calculate ADX for all periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"adx_{period}"] = ta.ADX(dataframe, timeperiod=period)
 
-        # Volume Oscillator
-        dataframe["vo"] = ta.PPO(
-            dataframe["volume"],
-            fastperiod=self.buy_vo_fast.value,
-            slowperiod=self.buy_vo_slow.value,
-        )
-
-        # Other indicators
-        dataframe["mfi"] = ta.MFI(dataframe, timeperiod=self.buy_mfi_period.value)
-        dataframe["cci"] = ta.CCI(dataframe, timeperiod=self.buy_cci_period.value)
-        dataframe["adx"] = ta.ADX(dataframe, timeperiod=self.buy_adx_period.value)
+        # Pre-calculate Volume Oscillator (PPO) for all fast/slow combinations
+        for fast in range(3, 11):
+            for slow in range(10, 31):
+                if fast < slow:
+                    dataframe[f"vo_{fast}_{slow}"] = ta.PPO(
+                        dataframe["volume"], fastperiod=fast, slowperiod=slow
+                    )
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        # Trend confirmation - at least one of the two conditions
-        trend_confirmation = (dataframe["ema_fast"] > dataframe["ema_slow"]) | (
-            dataframe["close"] > dataframe["ema_trend"]
+        # Get current hyperopt parameter values
+        rsi_period = self.buy_rsi_period.value
+        rsi_bb_period = self.buy_rsi_bb_period.value
+        rsi_bb_stddev = self.buy_rsi_bb_stddev.value
+        rsi_bb_period2 = self.buy_rsi_bb_period2.value
+        rsi_bb_stddev2 = self.buy_rsi_bb_stddev2.value
+        ema_fast_period = self.buy_ema_fast_period.value
+        ema_slow_period = self.buy_ema_slow_period.value
+        ema_trend_period = self.buy_ema_trend_period.value
+        atr_period = self.buy_atr_period.value
+        vo_fast = self.buy_vo_fast.value
+        vo_slow = self.buy_vo_slow.value
+        mfi_period = self.buy_mfi_period.value
+        cci_period = self.buy_cci_period.value
+        adx_period = self.buy_adx_period.value
+
+        # Select pre-calculated indicators
+        rsi = dataframe[f"rsi_{rsi_period}"]
+        ema_fast = dataframe[f"ema_{ema_fast_period}"]
+        ema_slow = dataframe[f"ema_{ema_slow_period}"]
+        ema_trend = dataframe[f"ema_{ema_trend_period}"]
+        atr = dataframe[f"atr_{atr_period}"]
+        vo = dataframe[f"vo_{vo_fast}_{vo_slow}"]
+        mfi = dataframe[f"mfi_{mfi_period}"]
+        cci = dataframe[f"cci_{cci_period}"]
+        adx = dataframe[f"adx_{adx_period}"]
+
+        # Calculate RSI Bollinger Bands dynamically (since they depend on RSI values)
+        rsi_bb1 = qtpylib.bollinger_bands(rsi, window=rsi_bb_period, stds=rsi_bb_stddev)
+        rsi_bb1_lower = rsi_bb1["lower"]
+        rsi_bb1_upper = rsi_bb1["upper"]
+
+        rsi_bb2 = qtpylib.bollinger_bands(rsi, window=rsi_bb_period2, stds=rsi_bb_stddev2)
+        rsi_bb2_lower = rsi_bb2["lower"]
+        rsi_bb2_upper = rsi_bb2["upper"]
+
+        # Calculate Parabolic SAR dynamically (too many combinations to pre-calculate)
+        sar = ta.SAR(
+            dataframe, acceleration=self.buy_sar_accel.value, maximum=self.buy_sar_max.value
         )
+
+        # Trend confirmation - at least one of the two conditions
+        trend_confirmation = (ema_fast > ema_slow) | (dataframe["close"] > ema_trend)
 
         # RSI dynamic oversold - RSI below at least one BB lower band or recently crossed above
         dynamic_oversold = (
             # Currently oversold
-            (dataframe["rsi"] < dataframe["rsi_bb1_lower"])
-            | (dataframe["rsi"] < dataframe["rsi_bb2_lower"])
+            (rsi < rsi_bb1_lower)
+            | (rsi < rsi_bb2_lower)
             # Or recently crossed above from oversold
-            | (qtpylib.crossed_above(dataframe["rsi"], dataframe["rsi_bb1_lower"]))
-            | (qtpylib.crossed_above(dataframe["rsi"], dataframe["rsi_bb2_lower"]))
+            | (qtpylib.crossed_above(rsi, rsi_bb1_lower))
+            | (qtpylib.crossed_above(rsi, rsi_bb2_lower))
         )
 
         # Volume/momentum confirmations - require at least 3 out of 6
-        atr_cond = dataframe["atr"] > dataframe["close"] * self.buy_atr_min_pct.value
-        sar_cond = dataframe["sar"] < dataframe["close"]
-        vo_cond = dataframe["vo"] > -5  # More lenient than > 0
-        mfi_cond = dataframe["mfi"] > self.buy_mfi_threshold.value
-        cci_cond = dataframe["cci"] > self.buy_cci_threshold.value
-        adx_cond = dataframe["adx"] > self.buy_adx_threshold.value
+        atr_cond = atr > dataframe["close"] * self.buy_atr_min_pct.value
+        sar_cond = sar < dataframe["close"]
+        vo_cond = vo > -5  # More lenient than > 0
+        mfi_cond = mfi > self.buy_mfi_threshold.value
+        cci_cond = cci > self.buy_cci_threshold.value
+        adx_cond = adx > self.buy_adx_threshold.value
 
         # Count true conditions
         momentum_score = (
@@ -179,6 +209,16 @@ class Strategy10012026_3(IStrategy):
         dataframe.loc[
             trend_confirmation & dynamic_oversold & vol_momentum_confirmation, "enter_long"
         ] = 1
+
+        # Store RSI BB values for exit trend
+        dataframe["rsi"] = rsi
+        dataframe["rsi_bb1_lower"] = rsi_bb1_lower
+        dataframe["rsi_bb1_upper"] = rsi_bb1_upper
+        dataframe["ema_fast"] = ema_fast
+        dataframe["ema_slow"] = ema_slow
+        dataframe["sar"] = sar
+        dataframe["mfi"] = mfi
+        dataframe["vo"] = vo
 
         return dataframe
 

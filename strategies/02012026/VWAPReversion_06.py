@@ -76,12 +76,8 @@ class VWAPReversion_06(IStrategy):
 
     # Hyperparameters
     # VWAP parameters
-    vwap_period = IntParameter(
-        20, 60, default=40, space="buy"
-    )  # Rolling window for VWAP
-    dev_period = IntParameter(
-        15, 30, default=20, space="buy"
-    )  # Period for deviation calculation
+    vwap_period = IntParameter(20, 60, default=40, space="buy")  # Rolling window for VWAP
+    dev_period = IntParameter(15, 30, default=20, space="buy")  # Period for deviation calculation
 
     # Deviation multipliers
     dev_mult_lower = DecimalParameter(1.5, 2.5, default=2.0, space="buy")
@@ -126,107 +122,58 @@ class VWAPReversion_06(IStrategy):
 
         return vwap
 
+    def calculate_deviation(self, dataframe: DataFrame, vwap: pd.Series) -> pd.Series:
+        """Calculate deviation from VWAP"""
+        return dataframe["close"] - vwap
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Adds several different TA indicators to the given DataFrame
+        Pre-calculates all indicator variants for hyperopt compatibility.
         """
 
-        # Calculate VWAP
-        dataframe["vwap"] = self.calculate_vwap(dataframe, self.vwap_period.value)
+        # Pre-calculate VWAP for all possible periods (20-60)
+        for period in range(20, 61):
+            dataframe[f"vwap_{period}"] = self.calculate_vwap(dataframe, period)
 
-        # Calculate deviation from VWAP
-        dataframe["deviation"] = dataframe["close"] - dataframe["vwap"]
-        dataframe["deviation_pct"] = (dataframe["deviation"] / dataframe["vwap"]) * 100
+        # Pre-calculate deviation std for all dev_periods (15-30)
+        for vwap_period in range(20, 61):
+            vwap = dataframe[f"vwap_{vwap_period}"]
+            deviation = dataframe["close"] - vwap
+            for dev_period in range(15, 31):
+                dataframe[f"dev_std_{vwap_period}_{dev_period}"] = deviation.rolling(
+                    window=dev_period
+                ).std()
 
-        # Calculate standard deviation of the deviation
-        dataframe["dev_std"] = (
-            dataframe["deviation"].rolling(window=self.dev_period.value).std()
-        )
+        # Pre-calculate ATR for all periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        # Calculate dynamic bands
-        dataframe["upper_dev"] = dataframe["vwap"] + (
-            self.dev_mult_upper.value * dataframe["dev_std"]
-        )
-        dataframe["lower_dev"] = dataframe["vwap"] - (
-            self.dev_mult_lower.value * dataframe["dev_std"]
-        )
+        # Pre-calculate RSI for all periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"rsi_{period}"] = ta.RSI(dataframe, timeperiod=period)
 
-        # ATR for volatility adjustment
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
+        # Pre-calculate Volume MA for all periods (15-30)
+        for period in range(15, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
-        # Adjust bands with ATR
-        dataframe["upper_dev_atr"] = dataframe["vwap"] + (
-            self.dev_mult_upper.value * dataframe["atr"] * self.atr_mult.value
-        )
-        dataframe["lower_dev_atr"] = dataframe["vwap"] - (
-            self.dev_mult_lower.value * dataframe["atr"] * self.atr_mult.value
-        )
-
-        # Use the wider of the two bands
-        dataframe["upper_band"] = dataframe[["upper_dev", "upper_dev_atr"]].max(axis=1)
-        dataframe["lower_band"] = dataframe[["lower_dev", "lower_dev_atr"]].min(axis=1)
-
-        # RSI for confirmation
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.rsi_period.value)
-
-        # Volume analysis
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_ok"] = dataframe["volume"] >= (
-            dataframe["volume_ma"] * self.volume_threshold.value
-        )
-
-        # Volume-weighted momentum
+        # Volume-weighted momentum (no hyperopt params)
         dataframe["vwm"] = (
-            (
-                (dataframe["close"] - dataframe["close"].shift(5))
-                / dataframe["close"].shift(5)
-            )
+            ((dataframe["close"] - dataframe["close"].shift(5)) / dataframe["close"].shift(5))
             * dataframe["volume"]
         ).rolling(window=10).sum() / dataframe["volume"].rolling(window=10).sum()
 
-        # Price position relative to VWAP
-        dataframe["price_above_vwap"] = dataframe["close"] > dataframe["vwap"]
-        dataframe["price_below_vwap"] = dataframe["close"] < dataframe["vwap"]
-
-        # Band touches
-        dataframe["touches_upper"] = dataframe["high"] >= dataframe["upper_band"]
-        dataframe["touches_lower"] = dataframe["low"] <= dataframe["lower_band"]
-
-        # VWAP slope for trend
-        dataframe["vwap_slope"] = (
-            (dataframe["vwap"] - dataframe["vwap"].shift(5))
-            / dataframe["vwap"].shift(5)
-            * 100
-        )
-
-        # RSI divergence (simplified)
+        # RSI divergence (simplified) - uses fixed lookback
         lookback = 10
         dataframe["price_lower"] = dataframe["low"] < dataframe["low"].shift(lookback)
-        dataframe["rsi_higher"] = dataframe["rsi"] > dataframe["rsi"].shift(lookback)
-        dataframe["bullish_div"] = dataframe["price_lower"] & dataframe["rsi_higher"]
-
-        dataframe["price_higher"] = dataframe["high"] > dataframe["high"].shift(
-            lookback
-        )
-        dataframe["rsi_lower"] = dataframe["rsi"] < dataframe["rsi"].shift(lookback)
-        dataframe["bearish_div"] = dataframe["price_higher"] & dataframe["rsi_lower"]
+        dataframe["price_higher"] = dataframe["high"] > dataframe["high"].shift(lookback)
 
         # Add hour for time filtering
         dataframe["hour"] = dataframe["date"].dt.hour
 
-        # Session filter
-        dataframe["session_active"] = (dataframe["hour"] >= self.start_hour.value) & (
-            dataframe["hour"] < self.end_hour.value
-        )
-
         # Cumulative volume for the session (reset daily)
         dataframe["day"] = dataframe["date"].dt.date
         dataframe["cum_volume"] = dataframe.groupby("day")["volume"].cumsum()
-
-        # Distance from VWAP in ATR units
-        dataframe["dist_from_vwap_atr"] = dataframe["deviation"] / dataframe["atr"]
 
         return dataframe
 
@@ -235,19 +182,69 @@ class VWAPReversion_06(IStrategy):
         Based on TA indicators, populates the entry signals
         """
 
+        # Get current hyperopt parameter values
+        vwap_period = self.vwap_period.value
+        dev_period = self.dev_period.value
+        dev_mult_upper = self.dev_mult_upper.value
+        dev_mult_lower = self.dev_mult_lower.value
+        atr_period = self.atr_period.value
+        atr_mult = self.atr_mult.value
+        rsi_period = self.rsi_period.value
+        volume_ma_period = self.volume_ma_period.value
+        volume_threshold = self.volume_threshold.value
+        start_hour = self.start_hour.value
+        end_hour = self.end_hour.value
+
+        # Select pre-calculated indicators
+        vwap = dataframe[f"vwap_{vwap_period}"]
+        dev_std = dataframe[f"dev_std_{vwap_period}_{dev_period}"]
+        atr = dataframe[f"atr_{atr_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+
+        # Calculate derived values
+        deviation = dataframe["close"] - vwap
+        upper_dev = vwap + (dev_mult_upper * dev_std)
+        lower_dev = vwap - (dev_mult_lower * dev_std)
+        upper_dev_atr = vwap + (dev_mult_upper * atr * atr_mult)
+        lower_dev_atr = vwap - (dev_mult_lower * atr * atr_mult)
+
+        # Use the wider of the two bands
+        upper_band = pd.concat([upper_dev, upper_dev_atr], axis=1).max(axis=1)
+        lower_band = pd.concat([lower_dev, lower_dev_atr], axis=1).min(axis=1)
+
+        # Volume check
+        volume_ok = dataframe["volume"] >= (volume_ma * volume_threshold)
+
+        # Session filter
+        session_active = (dataframe["hour"] >= start_hour) & (dataframe["hour"] < end_hour)
+
+        # VWAP slope
+        vwap_slope = (vwap - vwap.shift(5)) / vwap.shift(5) * 100
+
+        # Distance from VWAP in ATR units
+        dist_from_vwap_atr = deviation / atr
+
+        # RSI divergence
+        lookback = 10
+        rsi_higher = rsi > rsi.shift(lookback)
+        rsi_lower = rsi < rsi.shift(lookback)
+        bullish_div = dataframe["price_lower"] & rsi_higher
+        bearish_div = dataframe["price_higher"] & rsi_lower
+
         # LONG ENTRY: price too far below VWAP
         dataframe.loc[
             (
-                (dataframe["close"] < dataframe["lower_band"])  # Below lower deviation
-                & (dataframe["rsi"] < self.rsi_oversold.value)  # RSI confirms oversold
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["session_active"])  # Within trading session
-                & (abs(dataframe["vwap_slope"]) < 1.0)  # VWAP not trending strongly
+                (dataframe["close"] < lower_band)  # Below lower deviation
+                & (rsi < self.rsi_oversold.value)  # RSI confirms oversold
+                & (volume_ok)  # Volume confirmation
+                & (session_active)  # Within trading session
+                & (abs(vwap_slope) < 1.0)  # VWAP not trending strongly
                 & (
-                    (dataframe["bullish_div"])  # Bullish divergence
+                    (bullish_div)  # Bullish divergence
                     | (dataframe["vwm"] > -0.01)  # Or not too negative momentum
                 )
-                & (dataframe["dist_from_vwap_atr"] < -1.5)  # Significant deviation
+                & (dist_from_vwap_atr < -1.5)  # Significant deviation
             ),
             "enter_long",
         ] = 1
@@ -255,18 +252,16 @@ class VWAPReversion_06(IStrategy):
         # SHORT ENTRY: price too far above VWAP
         dataframe.loc[
             (
-                (dataframe["close"] > dataframe["upper_band"])  # Above upper deviation
+                (dataframe["close"] > upper_band)  # Above upper deviation
+                & (rsi > self.rsi_overbought.value)  # RSI confirms overbought
+                & (volume_ok)  # Volume confirmation
+                & (session_active)  # Within trading session
+                & (abs(vwap_slope) < 1.0)  # VWAP not trending strongly
                 & (
-                    dataframe["rsi"] > self.rsi_overbought.value
-                )  # RSI confirms overbought
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["session_active"])  # Within trading session
-                & (abs(dataframe["vwap_slope"]) < 1.0)  # VWAP not trending strongly
-                & (
-                    (dataframe["bearish_div"])  # Bearish divergence
+                    (bearish_div)  # Bearish divergence
                     | (dataframe["vwm"] < 0.01)  # Or not too positive momentum
                 )
-                & (dataframe["dist_from_vwap_atr"] > 1.5)  # Significant deviation
+                & (dist_from_vwap_atr > 1.5)  # Significant deviation
             ),
             "enter_short",
         ] = 1
@@ -278,41 +273,69 @@ class VWAPReversion_06(IStrategy):
         Based on TA indicators, populates the exit signals
         """
 
+        # Get current hyperopt parameter values
+        vwap_period = self.vwap_period.value
+        dev_period = self.dev_period.value
+        dev_mult_upper = self.dev_mult_upper.value
+        dev_mult_lower = self.dev_mult_lower.value
+        atr_period = self.atr_period.value
+        atr_mult = self.atr_mult.value
+        rsi_period = self.rsi_period.value
+        start_hour = self.start_hour.value
+        end_hour = self.end_hour.value
+        partial_exit_ratio = self.partial_exit_ratio.value
+
+        # Select pre-calculated indicators
+        vwap = dataframe[f"vwap_{vwap_period}"]
+        dev_std = dataframe[f"dev_std_{vwap_period}_{dev_period}"]
+        atr = dataframe[f"atr_{atr_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+
+        # Calculate derived values
+        upper_dev = vwap + (dev_mult_upper * dev_std)
+        lower_dev = vwap - (dev_mult_lower * dev_std)
+        upper_dev_atr = vwap + (dev_mult_upper * atr * atr_mult)
+        lower_dev_atr = vwap - (dev_mult_lower * atr * atr_mult)
+
+        # Use the wider of the two bands
+        upper_band = pd.concat([upper_dev, upper_dev_atr], axis=1).max(axis=1)
+        lower_band = pd.concat([lower_dev, lower_dev_atr], axis=1).min(axis=1)
+
+        # Session filter
+        session_active = (dataframe["hour"] >= start_hour) & (dataframe["hour"] < end_hour)
+
+        # VWAP slope
+        vwap_slope = (vwap - vwap.shift(5)) / vwap.shift(5) * 100
+
         # Calculate partial exit targets
-        dataframe["long_partial_target"] = dataframe["lower_band"] + (
-            (dataframe["vwap"] - dataframe["lower_band"])
-            * self.partial_exit_ratio.value
-        )
-        dataframe["short_partial_target"] = dataframe["upper_band"] - (
-            (dataframe["upper_band"] - dataframe["vwap"])
-            * self.partial_exit_ratio.value
-        )
+        long_partial_target = lower_band + ((vwap - lower_band) * partial_exit_ratio)
+        short_partial_target = upper_band - ((upper_band - vwap) * partial_exit_ratio)
 
         # LONG EXIT
         dataframe.loc[
             (
-                (dataframe["close"] >= dataframe["vwap"])
+                (dataframe["close"] >= vwap)
                 if self.vwap_touch_exit.value
-                else (dataframe["close"] >= dataframe["long_partial_target"])
+                else (dataframe["close"] >= long_partial_target)
             )
-            | (dataframe["rsi"] > 65)  # No longer oversold
-            | (dataframe["vwap_slope"] < -0.5)  # VWAP turning down
-            | (~dataframe["session_active"])  # Session ending
-            | (dataframe["close"] > dataframe["upper_band"]),  # Extreme reversal
+            | (rsi > 65)  # No longer oversold
+            | (vwap_slope < -0.5)  # VWAP turning down
+            | (~session_active)  # Session ending
+            | (dataframe["close"] > upper_band),  # Extreme reversal
             "exit_long",
         ] = 1
 
         # SHORT EXIT
         dataframe.loc[
             (
-                (dataframe["close"] <= dataframe["vwap"])
+                (dataframe["close"] <= vwap)
                 if self.vwap_touch_exit.value
-                else (dataframe["close"] <= dataframe["short_partial_target"])
+                else (dataframe["close"] <= short_partial_target)
             )
-            | (dataframe["rsi"] < 35)  # No longer overbought
-            | (dataframe["vwap_slope"] > 0.5)  # VWAP turning up
-            | (~dataframe["session_active"])  # Session ending
-            | (dataframe["close"] < dataframe["lower_band"]),  # Extreme reversal
+            | (rsi < 35)  # No longer overbought
+            | (vwap_slope > 0.5)  # VWAP turning up
+            | (~session_active)  # Session ending
+            | (dataframe["close"] < lower_band),  # Extreme reversal
             "exit_short",
         ] = 1
 
@@ -334,27 +357,52 @@ class VWAPReversion_06(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        vwap_period = self.vwap_period.value
+        atr_period = self.atr_period.value
+        start_hour = self.start_hour.value
+        end_hour = self.end_hour.value
+
+        # Select pre-calculated indicators
+        vwap = last_candle[f"vwap_{vwap_period}"]
+        atr = last_candle[f"atr_{atr_period}"]
+
+        # Calculate VWAP slope from dataframe
+        vwap_col = dataframe[f"vwap_{vwap_period}"]
+        vwap_slope = (
+            ((vwap_col.iloc[-1] - vwap_col.iloc[-6]) / vwap_col.iloc[-6] * 100)
+            if len(dataframe) > 5
+            else 0
+        )
+
+        # Session check
+        session_active = (last_candle["hour"] >= start_hour) and (last_candle["hour"] < end_hour)
+
+        # Distance from VWAP in ATR units
+        deviation = last_candle["close"] - vwap
+        dist_from_vwap_atr = deviation / atr if atr > 0 else 0
+
         # Exit if we're past VWAP with profit
         if not trade.is_short:
-            if last_candle["close"] > last_candle["vwap"] and current_profit > 0.005:
+            if last_candle["close"] > vwap and current_profit > 0.005:
                 return "vwap_crossed_profit"
         else:
-            if last_candle["close"] < last_candle["vwap"] and current_profit > 0.005:
+            if last_candle["close"] < vwap and current_profit > 0.005:
                 return "vwap_crossed_profit"
 
         # Exit if session is ending
-        if not last_candle["session_active"] and current_profit > -0.005:
+        if not session_active and current_profit > -0.005:
             return "session_end"
 
         # Exit if VWAP starts trending strongly against position
-        if not trade.is_short and last_candle["vwap_slope"] < -1.0:
+        if not trade.is_short and vwap_slope < -1.0:
             return "vwap_trending_down"
-        if trade.is_short and last_candle["vwap_slope"] > 1.0:
+        if trade.is_short and vwap_slope > 1.0:
             return "vwap_trending_up"
 
         # Quick profit if deviation narrows
         if current_profit > 0.01:
-            if abs(last_candle["dist_from_vwap_atr"]) < 0.5:
+            if abs(dist_from_vwap_atr) < 0.5:
                 return "deviation_narrowed"
 
         # Time-based exit
@@ -382,15 +430,28 @@ class VWAPReversion_06(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        vwap_period = self.vwap_period.value
+        atr_period = self.atr_period.value
+        start_hour = self.start_hour.value
+        end_hour = self.end_hour.value
+
+        # Select pre-calculated indicators
+        vwap = last_candle[f"vwap_{vwap_period}"]
+        atr = last_candle[f"atr_{atr_period}"]
+
+        # Session check
+        session_active = (last_candle["hour"] >= start_hour) and (last_candle["hour"] < end_hour)
+
         # Dynamic stop based on ATR
-        atr_stop = -(last_candle["atr"] * 2.5 / trade.open_rate)
+        atr_stop = -(atr * 2.5 / trade.open_rate)
 
         # Tighten stop when approaching VWAP
         if not trade.is_short:
-            if current_rate > last_candle["vwap"] * 0.998:
+            if current_rate > vwap * 0.998:
                 return -0.003  # Very tight stop near target
         else:
-            if current_rate < last_candle["vwap"] * 1.002:
+            if current_rate < vwap * 1.002:
                 return -0.003  # Very tight stop near target
 
         # Progressive stops based on profit
@@ -402,7 +463,7 @@ class VWAPReversion_06(IStrategy):
             return -0.01
 
         # Use tighter stop if session is ending
-        if not last_candle["session_active"]:
+        if not session_active:
             return max(atr_stop, -0.02)
 
         return max(atr_stop, self.stoploss)
@@ -426,20 +487,43 @@ class VWAPReversion_06(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        vwap_period = self.vwap_period.value
+        atr_period = self.atr_period.value
+        volume_ma_period = self.volume_ma_period.value
+        end_hour = self.end_hour.value
+
+        # Select pre-calculated indicators
+        vwap = last_candle[f"vwap_{vwap_period}"]
+        atr = last_candle[f"atr_{atr_period}"]
+        volume_ma = last_candle[f"volume_ma_{volume_ma_period}"]
+
+        # Calculate VWAP slope from dataframe
+        vwap_col = dataframe[f"vwap_{vwap_period}"]
+        vwap_slope = (
+            ((vwap_col.iloc[-1] - vwap_col.iloc[-6]) / vwap_col.iloc[-6] * 100)
+            if len(dataframe) > 5
+            else 0
+        )
+
+        # Distance from VWAP in ATR units
+        deviation = last_candle["close"] - vwap
+        dist_from_vwap_atr = deviation / atr if atr > 0 else 0
+
         # Don't enter if deviation is too extreme (likely to continue)
-        if abs(last_candle["dist_from_vwap_atr"]) > 3:
+        if abs(dist_from_vwap_atr) > 3:
             return False
 
         # Don't enter if volume is too low
-        if last_candle["cum_volume"] < last_candle["volume_ma"] * 10:
+        if last_candle["cum_volume"] < volume_ma * 10:
             return False
 
         # Avoid entries near session end
-        if last_candle["hour"] >= self.end_hour.value - 1:
+        if last_candle["hour"] >= end_hour - 1:
             return False
 
         # Don't enter if VWAP is trending too strongly
-        if abs(last_candle["vwap_slope"]) > 1.5:
+        if abs(vwap_slope) > 1.5:
             return False
 
         return True

@@ -33,6 +33,9 @@ class MACDSARScalper_02(IStrategy):
     - Volume spike detection for better entries
     - ATR-based volatility filter
     - Time-based trading sessions
+
+    FIXED: Hyperopt parameters now used in populate_entry_trend/populate_exit_trend
+    instead of populate_indicators for proper hyperopt compatibility.
     """
 
     # Strategy interface version
@@ -88,65 +91,44 @@ class MACDSARScalper_02(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Adds several different TA indicators to the given DataFrame
+        Pre-calculate indicators for all possible hyperopt parameter values.
+        This ensures hyperopt works correctly by having all variants available.
         """
 
-        # MACD
-        macd = ta.MACD(
-            dataframe,
-            fastperiod=self.macd_fast.value,
-            slowperiod=self.macd_slow.value,
-            signalperiod=self.macd_signal.value,
-        )
-        dataframe["macd"] = macd["macd"]
-        dataframe["macd_signal"] = macd["macdsignal"]
-        dataframe["macd_hist"] = macd["macdhist"]
+        # Pre-calculate MACD for all possible parameter combinations
+        for fast in range(10, 16):
+            for slow in range(20, 31):
+                for signal in range(7, 12):
+                    if slow > fast:  # Ensure slow > fast
+                        macd = ta.MACD(
+                            dataframe,
+                            fastperiod=fast,
+                            slowperiod=slow,
+                            signalperiod=signal,
+                        )
+                        dataframe[f"macd_{fast}_{slow}_{signal}"] = macd["macd"]
+                        dataframe[f"macd_signal_{fast}_{slow}_{signal}"] = macd["macdsignal"]
+                        dataframe[f"macd_hist_{fast}_{slow}_{signal}"] = macd["macdhist"]
 
-        # Parabolic SAR
-        dataframe["sar"] = ta.SAR(
-            dataframe, acceleration=self.sar_af.value, maximum=self.sar_max.value
-        )
+        # Pre-calculate Parabolic SAR for all possible parameter combinations
+        # sar_af: 0.01-0.03 (step 0.01), sar_max: 0.15-0.25 (step 0.01)
+        for af in [0.01, 0.02, 0.03]:
+            for mx in [0.15, 0.16, 0.17, 0.18, 0.19, 0.20, 0.21, 0.22, 0.23, 0.24, 0.25]:
+                dataframe[f"sar_{af}_{mx}"] = ta.SAR(dataframe, acceleration=af, maximum=mx)
 
-        # EMA for trend filter
-        dataframe["ema50"] = ta.EMA(dataframe, timeperiod=self.ema_period.value)
+        # Pre-calculate EMA for all possible periods (40-60)
+        for period in range(40, 61):
+            dataframe[f"ema_{period}"] = ta.EMA(dataframe, timeperiod=period)
 
-        # Volume
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_spike"] = dataframe["volume"] > (
-            dataframe["volume_ma"] * self.volume_threshold.value
-        )
+        # Pre-calculate Volume MA for all possible periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
-        # ATR for volatility
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
+        # Pre-calculate ATR for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        # Trend conditions
-        dataframe["uptrend"] = dataframe["close"] > dataframe["ema50"]
-        dataframe["downtrend"] = dataframe["close"] < dataframe["ema50"]
-
-        # MACD crossovers
-        dataframe["macd_cross_up"] = (dataframe["macd"] > dataframe["macd_signal"]) & (
-            dataframe["macd"].shift(1) <= dataframe["macd_signal"].shift(1)
-        )
-
-        dataframe["macd_cross_down"] = (
-            dataframe["macd"] < dataframe["macd_signal"]
-        ) & (dataframe["macd"].shift(1) >= dataframe["macd_signal"].shift(1))
-
-        # SAR conditions
-        dataframe["sar_below"] = dataframe["sar"] < dataframe["close"]
-        dataframe["sar_above"] = dataframe["sar"] > dataframe["close"]
-
-        # Histogram momentum
-        dataframe["hist_positive_momentum"] = (
-            dataframe["macd_hist"] > self.hist_threshold.value
-        )
-        dataframe["hist_negative_momentum"] = (
-            dataframe["macd_hist"] < -self.hist_threshold.value
-        )
-
-        # Price action
+        # Price action (fixed, no hyperopt parameters)
         dataframe["price_increase"] = dataframe["close"] > dataframe["close"].shift(1)
         dataframe["price_decrease"] = dataframe["close"] < dataframe["close"].shift(1)
 
@@ -154,20 +136,57 @@ class MACDSARScalper_02(IStrategy):
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on TA indicators, populates the entry signals
+        Based on TA indicators, populates the entry signals.
+        Hyperopt parameters are used here so they're evaluated each epoch.
         """
+        # Get hyperopt parameter values
+        fast = self.macd_fast.value
+        slow = self.macd_slow.value
+        signal = self.macd_signal.value
+        af = round(self.sar_af.value, 2)
+        mx = round(self.sar_max.value, 2)
+        ema_period = self.ema_period.value
+        volume_ma_period = self.volume_ma_period.value
+        atr_period = self.atr_period.value
+
+        # Get pre-calculated indicators for current hyperopt values
+        macd = dataframe[f"macd_{fast}_{slow}_{signal}"]
+        macd_signal_line = dataframe[f"macd_signal_{fast}_{slow}_{signal}"]
+        macd_hist = dataframe[f"macd_hist_{fast}_{slow}_{signal}"]
+        sar = dataframe[f"sar_{af}_{mx}"]
+        ema = dataframe[f"ema_{ema_period}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+        atr = dataframe[f"atr_{atr_period}"]
+
+        # Calculate derived values using hyperopt parameters
+        # Trend conditions
+        uptrend = dataframe["close"] > ema
+        downtrend = dataframe["close"] < ema
+
+        # MACD crossovers
+        macd_cross_up = (macd > macd_signal_line) & (macd.shift(1) <= macd_signal_line.shift(1))
+        macd_cross_down = (macd < macd_signal_line) & (macd.shift(1) >= macd_signal_line.shift(1))
+
+        # SAR conditions
+        sar_below = sar < dataframe["close"]
+        sar_above = sar > dataframe["close"]
+
+        # Histogram momentum using hyperopt threshold
+        hist_positive_momentum = macd_hist > self.hist_threshold.value
+        hist_negative_momentum = macd_hist < -self.hist_threshold.value
+
+        # Volume spike using hyperopt parameters
+        volume_spike = dataframe["volume"] > (volume_ma * self.volume_threshold.value)
 
         # LONG ENTRY
         dataframe.loc[
             (
-                (dataframe["uptrend"])  # Trend up
-                & (dataframe["macd_cross_up"])  # Bullish momentum shift
-                & (dataframe["sar_below"])  # PSAR below price
-                & (dataframe["volume_spike"])  # Volume confirmation
-                & (
-                    dataframe["atr"] > self.atr_min_threshold.value
-                )  # Sufficient volatility
-                & (dataframe["hist_positive_momentum"])  # Histogram confirms momentum
+                (uptrend)  # Trend up
+                & (macd_cross_up)  # Bullish momentum shift
+                & (sar_below)  # PSAR below price
+                & (volume_spike)  # Volume confirmation
+                & (atr > self.atr_min_threshold.value)  # Sufficient volatility
+                & (hist_positive_momentum)  # Histogram confirms momentum
                 & (dataframe["price_increase"])  # Current candle is green
             ),
             "enter_long",
@@ -176,14 +195,12 @@ class MACDSARScalper_02(IStrategy):
         # SHORT ENTRY
         dataframe.loc[
             (
-                (dataframe["downtrend"])  # Trend down
-                & (dataframe["macd_cross_down"])  # Bearish momentum shift
-                & (dataframe["sar_above"])  # PSAR above price
-                & (dataframe["volume_spike"])  # Volume confirmation
-                & (
-                    dataframe["atr"] > self.atr_min_threshold.value
-                )  # Sufficient volatility
-                & (dataframe["hist_negative_momentum"])  # Histogram confirms momentum
+                (downtrend)  # Trend down
+                & (macd_cross_down)  # Bearish momentum shift
+                & (sar_above)  # PSAR above price
+                & (volume_spike)  # Volume confirmation
+                & (atr > self.atr_min_threshold.value)  # Sufficient volatility
+                & (hist_negative_momentum)  # Histogram confirms momentum
                 & (dataframe["price_decrease"])  # Current candle is red
             ),
             "enter_short",
@@ -193,19 +210,43 @@ class MACDSARScalper_02(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on TA indicators, populates the exit signals
+        Based on TA indicators, populates the exit signals.
+        Hyperopt parameters are used here so they're evaluated each epoch.
         """
+        # Get hyperopt parameter values
+        fast = self.macd_fast.value
+        slow = self.macd_slow.value
+        signal = self.macd_signal.value
+        af = round(self.sar_af.value, 2)
+        mx = round(self.sar_max.value, 2)
+        ema_period = self.ema_period.value
+
+        # Get pre-calculated indicators for current hyperopt values
+        macd = dataframe[f"macd_{fast}_{slow}_{signal}"]
+        macd_signal_line = dataframe[f"macd_signal_{fast}_{slow}_{signal}"]
+        macd_hist = dataframe[f"macd_hist_{fast}_{slow}_{signal}"]
+        sar = dataframe[f"sar_{af}_{mx}"]
+        ema = dataframe[f"ema_{ema_period}"]
+
+        # Trend conditions
+        uptrend = dataframe["close"] > ema
+        downtrend = dataframe["close"] < ema
+
+        # MACD crossovers
+        macd_cross_up = (macd > macd_signal_line) & (macd.shift(1) <= macd_signal_line.shift(1))
+        macd_cross_down = (macd < macd_signal_line) & (macd.shift(1) >= macd_signal_line.shift(1))
+
+        # SAR conditions
+        sar_below = sar < dataframe["close"]
+        sar_above = sar > dataframe["close"]
 
         # LONG EXIT
         dataframe.loc[
             (
-                (dataframe["macd_cross_down"])  # MACD bearish cross
-                | (dataframe["sar_above"])  # SAR flipped above price
-                | (dataframe["downtrend"])  # Trend changed
-                | (
-                    (dataframe["macd_hist"] < 0)  # Histogram turned negative
-                    & (dataframe["macd_hist"].shift(1) > 0)
-                )
+                (macd_cross_down)  # MACD bearish cross
+                | (sar_above)  # SAR flipped above price
+                | (downtrend)  # Trend changed
+                | ((macd_hist < 0) & (macd_hist.shift(1) > 0))  # Histogram turned negative
             ),
             "exit_long",
         ] = 1
@@ -213,13 +254,10 @@ class MACDSARScalper_02(IStrategy):
         # SHORT EXIT
         dataframe.loc[
             (
-                (dataframe["macd_cross_up"])  # MACD bullish cross
-                | (dataframe["sar_below"])  # SAR flipped below price
-                | (dataframe["uptrend"])  # Trend changed
-                | (
-                    (dataframe["macd_hist"] > 0)  # Histogram turned positive
-                    & (dataframe["macd_hist"].shift(1) < 0)
-                )
+                (macd_cross_up)  # MACD bullish cross
+                | (sar_below)  # SAR flipped below price
+                | (uptrend)  # Trend changed
+                | ((macd_hist > 0) & (macd_hist.shift(1) < 0))  # Histogram turned positive
             ),
             "exit_short",
         ] = 1
@@ -242,12 +280,21 @@ class MACDSARScalper_02(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get hyperopt parameter values
+        fast = self.macd_fast.value
+        slow = self.macd_slow.value
+        signal = self.macd_signal.value
+        atr_period = self.atr_period.value
+
+        macd_hist = last_candle[f"macd_hist_{fast}_{slow}_{signal}"]
+        atr = last_candle[f"atr_{atr_period}"]
+
         # Quick profit taking for 1m scalping
         if current_profit > 0.008:
             return "quick_profit"
 
         # Exit if volatility drops too low (consolidation)
-        if last_candle["atr"] < self.atr_min_threshold.value * 0.5:
+        if atr < self.atr_min_threshold.value * 0.5:
             return "low_volatility"
 
         # Time-based exit for stuck trades (10 minutes for 1m timeframe)
@@ -257,10 +304,10 @@ class MACDSARScalper_02(IStrategy):
 
         # Exit if MACD histogram loses momentum significantly
         if not trade.is_short:
-            if last_candle["macd_hist"] < -self.hist_threshold.value * 2:
+            if macd_hist < -self.hist_threshold.value * 2:
                 return "momentum_loss_long"
         else:
-            if last_candle["macd_hist"] > self.hist_threshold.value * 2:
+            if macd_hist > self.hist_threshold.value * 2:
                 return "momentum_loss_short"
 
         return None
@@ -316,9 +363,7 @@ class MACDSARScalper_02(IStrategy):
             return False
 
         # Check if we have too many open trades on this pair
-        open_trades = len(
-            [trade for trade in Trade.get_open_trades() if trade.pair == pair]
-        )
+        open_trades = len([trade for trade in Trade.get_open_trades() if trade.pair == pair])
         if open_trades >= 2:  # Max 2 trades per pair
             return False
 

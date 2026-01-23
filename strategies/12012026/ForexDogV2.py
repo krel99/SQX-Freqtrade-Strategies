@@ -27,14 +27,23 @@ class ForexDogV2(ForexDogBase):
     This variation uses momentum indicators (RSI) along with EMA alignments
     for stronger trend confirmation. It requires price to be above 8 EMAs
     and RSI > 60 for entry, exiting when price touches EMA9.
+
+    FIXED: Now uses base class helper methods for EMAs to ensure
+    hyperopt parameters are properly evaluated each epoch.
     """
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Based on TA indicators, populates the entry signal for the given dataframe
-        Uses momentum confirmation with RSI and EMA alignment
+        Uses momentum confirmation with RSI and EMA alignment.
+        Uses base class helper methods to get EMAs based on current hyperopt values.
         """
         df = dataframe
+
+        # Get EMAs based on current hyperopt parameter values
+        ema_1 = self.get_ema_by_number(df, 1)
+        ema_2 = self.get_ema_by_number(df, 2)
+        ema_3 = self.get_ema_by_number(df, 3)
 
         # Simplified entry conditions for V2 with RSI momentum:
         # 1. Price is above EMA1, EMA2, and EMA3 (basic uptrend)
@@ -44,17 +53,17 @@ class ForexDogV2(ForexDogBase):
         df.loc[
             (
                 # Price is above key EMAs
-                (df["close"] > df["ema_1"])
-                & (df["close"] > df["ema_2"])
-                & (df["close"] > df["ema_3"])
+                (df["close"] > ema_1)
+                & (df["close"] > ema_2)
+                & (df["close"] > ema_3)
                 # RSI momentum confirmation (not too low, not overbought)
                 & (df["rsi"] > 55)
                 & (df["rsi"] < 75)
                 # Basic EMA alignment
-                & (df["ema_1"] > df["ema_2"])
-                & (df["ema_2"] > df["ema_3"])
+                & (ema_1 > ema_2)
+                & (ema_2 > ema_3)
                 # Price is within 3% of EMA3 (pullback entry)
-                & ((df["close"] - df["ema_3"]) / df["ema_3"] < 0.03)
+                & ((df["close"] - ema_3) / ema_3 < 0.03)
             ),
             "enter_long",
         ] = 1
@@ -63,9 +72,14 @@ class ForexDogV2(ForexDogBase):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on TA indicators, populates the exit signal for the given dataframe
+        Based on TA indicators, populates the exit signal for the given dataframe.
+        Uses base class helper methods to get EMAs based on current hyperopt values.
         """
         df = dataframe
+
+        # Get EMAs based on current hyperopt parameter values
+        ema_2 = self.get_ema_by_number(df, 2)
+        ema_4 = self.get_ema_by_number(df, 4)
 
         # Exit when RSI is overbought or price extends too far from EMAs
         df.loc[
@@ -73,9 +87,9 @@ class ForexDogV2(ForexDogBase):
                 # RSI overbought exit
                 (df["rsi"] > 75)
                 # Or price is too extended above EMA4
-                | ((df["close"] - df["ema_4"]) / df["ema_4"] > 0.05)
+                | ((df["close"] - ema_4) / ema_4 > 0.05)
                 # Or price crosses below EMA2 (stop loss)
-                | (qtpylib.crossed_below(df["close"], df["ema_2"]))
+                | (qtpylib.crossed_below(df["close"], ema_2))
             ),
             "exit_long",
         ] = 1

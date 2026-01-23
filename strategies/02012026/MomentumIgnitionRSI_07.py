@@ -111,36 +111,42 @@ class MomentumIgnitionRSI_07(IStrategy):
         Adds several different TA indicators to the given DataFrame
         """
 
-        # Rate of Change
-        dataframe["roc"] = (
-            dataframe["close"] / dataframe["close"].shift(self.roc_period.value) - 1
-        ) * 100
+        # Pre-calculate Rate of Change for all possible periods (3-8)
+        for period in range(3, 9):
+            dataframe[f"roc_{period}"] = (
+                dataframe["close"] / dataframe["close"].shift(period) - 1
+            ) * 100
 
-        # RSI
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.rsi_period.value)
+        # Pre-calculate RSI for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"rsi_{period}"] = ta.RSI(dataframe, timeperiod=period)
 
-        # Volume
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_surge"] = dataframe["volume"] > (
-            dataframe["volume_ma"] * self.volume_surge_mult.value
-        )
+        # Pre-calculate Volume MA for all possible periods (10-30)
+        for period in range(10, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
-        # ATR for volatility
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
-        dataframe["atr_ma"] = ta.SMA(dataframe["atr"], timeperiod=20)
+        # Pre-calculate ATR for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        # MACD for additional momentum confirmation
-        macd = ta.MACD(
-            dataframe,
-            fastperiod=self.macd_fast.value,
-            slowperiod=self.macd_slow.value,
-            signalperiod=self.macd_signal.value,
-        )
-        dataframe["macd"] = macd["macd"]
-        dataframe["macd_signal"] = macd["macdsignal"]
-        dataframe["macd_hist"] = macd["macdhist"]
+        # ATR MA (fixed period)
+        dataframe["atr_ma"] = ta.SMA(dataframe["atr_14"], timeperiod=20)
+
+        # Pre-calculate MACD for all possible combinations
+        # macd_fast: 8-15, macd_slow: 20-30, macd_signal: 7-11
+        for fast in range(8, 16):
+            for slow in range(20, 31):
+                for signal in range(7, 12):
+                    if fast < slow:  # MACD requires fast < slow
+                        macd = ta.MACD(
+                            dataframe,
+                            fastperiod=fast,
+                            slowperiod=slow,
+                            signalperiod=signal,
+                        )
+                        dataframe[f"macd_{fast}_{slow}_{signal}"] = macd["macd"]
+                        dataframe[f"macd_signal_{fast}_{slow}_{signal}"] = macd["macdsignal"]
+                        dataframe[f"macd_hist_{fast}_{slow}_{signal}"] = macd["macdhist"]
 
         # Candle color
         dataframe["green_candle"] = dataframe["close"] > dataframe["open"]
@@ -156,20 +162,14 @@ class MomentumIgnitionRSI_07(IStrategy):
 
         # Price momentum
         dataframe["momentum_1"] = (
-            (dataframe["close"] - dataframe["close"].shift(1))
-            / dataframe["close"].shift(1)
-            * 100
+            (dataframe["close"] - dataframe["close"].shift(1)) / dataframe["close"].shift(1) * 100
         )
         dataframe["momentum_3"] = (
-            (dataframe["close"] - dataframe["close"].shift(3))
-            / dataframe["close"].shift(3)
-            * 100
+            (dataframe["close"] - dataframe["close"].shift(3)) / dataframe["close"].shift(3) * 100
         )
 
         # Dynamic ROC thresholds based on volatility
-        dataframe["roc_threshold_dynamic"] = (
-            dataframe["atr"] / dataframe["close"] * 100 * 2
-        )
+        dataframe["roc_threshold_dynamic"] = dataframe["atr"] / dataframe["close"] * 100 * 2
 
         # Momentum acceleration
         dataframe["roc_increasing"] = dataframe["roc"] > dataframe["roc"].shift(1)
@@ -187,18 +187,13 @@ class MomentumIgnitionRSI_07(IStrategy):
         dataframe["above_ema20"] = dataframe["close"] > dataframe["ema20"]
         dataframe["below_ema20"] = dataframe["close"] < dataframe["ema20"]
 
-        # Momentum exhaustion detection
-        dataframe["high_recent"] = (
-            dataframe["high"].rolling(window=self.momentum_lookback.value).max()
-        )
-        dataframe["low_recent"] = (
-            dataframe["low"].rolling(window=self.momentum_lookback.value).min()
-        )
+        # Pre-calculate momentum exhaustion detection for all lookback periods (3-8)
+        for lookback in range(3, 9):
+            dataframe[f"high_recent_{lookback}"] = dataframe["high"].rolling(window=lookback).max()
+            dataframe[f"low_recent_{lookback}"] = dataframe["low"].rolling(window=lookback).min()
 
         # Volume profile
-        dataframe["volume_increasing"] = dataframe["volume"] > dataframe[
-            "volume"
-        ].shift(1)
+        dataframe["volume_increasing"] = dataframe["volume"] > dataframe["volume"].shift(1)
 
         return dataframe
 
@@ -207,29 +202,47 @@ class MomentumIgnitionRSI_07(IStrategy):
         Based on TA indicators, populates the entry signals
         """
 
+        # Get current hyperopt parameter values
+        roc_period = self.roc_period.value
+        rsi_period = self.rsi_period.value
+        volume_ma_period = self.volume_ma_period.value
+        volume_surge_mult = self.volume_surge_mult.value
+        atr_period = self.atr_period.value
+        atr_min_mult = self.atr_min_mult.value
+        macd_fast = self.macd_fast.value
+        macd_slow = self.macd_slow.value
+        macd_signal = self.macd_signal.value
+
+        # Select pre-calculated indicators
+        roc = dataframe[f"roc_{roc_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+        volume_surge = dataframe["volume"] > (volume_ma * volume_surge_mult)
+        atr = dataframe[f"atr_{atr_period}"]
+        macd_hist = dataframe[f"macd_hist_{macd_fast}_{macd_slow}_{macd_signal}"]
+
+        # RSI increasing/decreasing based on selected RSI
+        rsi_increasing = rsi > rsi.shift(1)
+        rsi_decreasing = rsi < rsi.shift(1)
+
+        # Dynamic ROC threshold
+        roc_threshold_dynamic = atr / dataframe["close"] * 100 * 2
+
         # LONG ENTRY
         dataframe.loc[
             (
-                (
-                    dataframe["roc"] > self.roc_threshold_long.value
-                )  # Strong positive ROC
-                & (
-                    dataframe["roc"] > dataframe["roc_threshold_dynamic"] * 0.5
-                )  # Dynamic check
-                & (dataframe["rsi"] >= self.rsi_min_long.value)  # RSI not oversold
-                & (dataframe["rsi"] <= self.rsi_max_long.value)  # RSI not overbought
+                (roc > self.roc_threshold_long.value)  # Strong positive ROC
+                & (roc > roc_threshold_dynamic * 0.5)  # Dynamic check
+                & (rsi >= self.rsi_min_long.value)  # RSI not oversold
+                & (rsi <= self.rsi_max_long.value)  # RSI not overbought
                 & (dataframe["green_candle"])  # Last candle green
-                & (dataframe["volume_surge"])  # Volume surge
-                & (
-                    dataframe["atr"] > dataframe["atr_ma"] * self.atr_min_mult.value
-                )  # Volatility check
-                & (dataframe["macd_hist"] > 0)  # MACD histogram positive
-                & (
-                    dataframe["macd_hist"] > dataframe["macd_hist"].shift(1)
-                )  # Increasing momentum
+                & (volume_surge)  # Volume surge
+                & (atr > dataframe["atr_ma"] * atr_min_mult)  # Volatility check
+                & (macd_hist > 0)  # MACD histogram positive
+                & (macd_hist > macd_hist.shift(1))  # Increasing momentum
                 & (dataframe["above_ema20"])  # Above short-term EMA
                 & (dataframe["consecutive_green"] >= 2)  # At least 2 green candles
-                & (dataframe["rsi_increasing"])  # RSI momentum up
+                & (rsi_increasing)  # RSI momentum up
             ),
             "enter_long",
         ] = 1
@@ -237,26 +250,18 @@ class MomentumIgnitionRSI_07(IStrategy):
         # SHORT ENTRY
         dataframe.loc[
             (
-                (
-                    dataframe["roc"] < -self.roc_threshold_short.value
-                )  # Strong negative ROC
-                & (
-                    dataframe["roc"] < -dataframe["roc_threshold_dynamic"] * 0.5
-                )  # Dynamic check
-                & (dataframe["rsi"] >= self.rsi_min_short.value)  # RSI not oversold
-                & (dataframe["rsi"] <= self.rsi_max_short.value)  # RSI not overbought
+                (roc < -self.roc_threshold_short.value)  # Strong negative ROC
+                & (roc < -roc_threshold_dynamic * 0.5)  # Dynamic check
+                & (rsi >= self.rsi_min_short.value)  # RSI not oversold
+                & (rsi <= self.rsi_max_short.value)  # RSI not overbought
                 & (dataframe["red_candle"])  # Last candle red
-                & (dataframe["volume_surge"])  # Volume surge
-                & (
-                    dataframe["atr"] > dataframe["atr_ma"] * self.atr_min_mult.value
-                )  # Volatility check
-                & (dataframe["macd_hist"] < 0)  # MACD histogram negative
-                & (
-                    dataframe["macd_hist"] < dataframe["macd_hist"].shift(1)
-                )  # Decreasing momentum
+                & (volume_surge)  # Volume surge
+                & (atr > dataframe["atr_ma"] * atr_min_mult)  # Volatility check
+                & (macd_hist < 0)  # MACD histogram negative
+                & (macd_hist < macd_hist.shift(1))  # Decreasing momentum
                 & (dataframe["below_ema20"])  # Below short-term EMA
                 & (dataframe["consecutive_red"] >= 2)  # At least 2 red candles
-                & (dataframe["rsi_decreasing"])  # RSI momentum down
+                & (rsi_decreasing)  # RSI momentum down
             ),
             "enter_short",
         ] = 1
@@ -268,20 +273,26 @@ class MomentumIgnitionRSI_07(IStrategy):
         Based on TA indicators, populates the exit signals
         """
 
+        # Get current hyperopt parameter values
+        roc_period = self.roc_period.value
+        rsi_period = self.rsi_period.value
+        macd_fast = self.macd_fast.value
+        macd_slow = self.macd_slow.value
+        macd_signal = self.macd_signal.value
+
+        # Select pre-calculated indicators
+        roc = dataframe[f"roc_{roc_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+        macd_hist = dataframe[f"macd_hist_{macd_fast}_{macd_slow}_{macd_signal}"]
+
         # LONG EXIT
         dataframe.loc[
             (
-                (dataframe["rsi"] > self.rsi_exit_long.value)  # RSI overbought
-                | (
-                    dataframe["red_candle"] & (dataframe["momentum_1"] < -0.5)
-                )  # Momentum stall
-                | (dataframe["roc"] < -0.5)  # ROC reversal
-                | (
-                    dataframe["macd_hist"] < dataframe["macd_hist"].shift(1)
-                )  # MACD momentum loss
-                & (
-                    dataframe["macd_hist"].shift(1) < dataframe["macd_hist"].shift(2)
-                )  # Consistent loss
+                (rsi > self.rsi_exit_long.value)  # RSI overbought
+                | (dataframe["red_candle"] & (dataframe["momentum_1"] < -0.5))  # Momentum stall
+                | (roc < -0.5)  # ROC reversal
+                | (macd_hist < macd_hist.shift(1))  # MACD momentum loss
+                & (macd_hist.shift(1) < macd_hist.shift(2))  # Consistent loss
                 | (dataframe["close"] < dataframe["ema20"])  # Below EMA20
                 | (dataframe["consecutive_red"] >= 2)  # Multiple red candles
             ),
@@ -291,17 +302,11 @@ class MomentumIgnitionRSI_07(IStrategy):
         # SHORT EXIT
         dataframe.loc[
             (
-                (dataframe["rsi"] < self.rsi_exit_short.value)  # RSI oversold
-                | (
-                    dataframe["green_candle"] & (dataframe["momentum_1"] > 0.5)
-                )  # Momentum stall
-                | (dataframe["roc"] > 0.5)  # ROC reversal
-                | (
-                    dataframe["macd_hist"] > dataframe["macd_hist"].shift(1)
-                )  # MACD momentum loss
-                & (
-                    dataframe["macd_hist"].shift(1) > dataframe["macd_hist"].shift(2)
-                )  # Consistent loss
+                (rsi < self.rsi_exit_short.value)  # RSI oversold
+                | (dataframe["green_candle"] & (dataframe["momentum_1"] > 0.5))  # Momentum stall
+                | (roc > 0.5)  # ROC reversal
+                | (macd_hist > macd_hist.shift(1))  # MACD momentum loss
+                & (macd_hist.shift(1) > macd_hist.shift(2))  # Consistent loss
                 | (dataframe["close"] > dataframe["ema20"])  # Above EMA20
                 | (dataframe["consecutive_green"] >= 2)  # Multiple green candles
             ),
@@ -326,6 +331,21 @@ class MomentumIgnitionRSI_07(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        roc_period = self.roc_period.value
+        volume_ma_period = self.volume_ma_period.value
+        momentum_lookback = self.momentum_lookback.value
+        macd_fast = self.macd_fast.value
+        macd_slow = self.macd_slow.value
+        macd_signal = self.macd_signal.value
+
+        # Select pre-calculated indicators
+        roc = last_candle[f"roc_{roc_period}"]
+        volume_ma = last_candle[f"volume_ma_{volume_ma_period}"]
+        high_recent = last_candle[f"high_recent_{momentum_lookback}"]
+        low_recent = last_candle[f"low_recent_{momentum_lookback}"]
+        macd_hist = last_candle[f"macd_hist_{macd_fast}_{macd_slow}_{macd_signal}"]
+
         # Quick profit taking
         if current_profit >= self.profit_target.value:
             return "profit_target_reached"
@@ -333,23 +353,23 @@ class MomentumIgnitionRSI_07(IStrategy):
         # Exit on momentum exhaustion
         if not trade.is_short:
             # Long: exit if price can't make new highs
-            if current_rate < last_candle["high_recent"] * 0.999:
+            if current_rate < high_recent * 0.999:
                 if current_profit > 0.003:
                     return "momentum_exhausted_long"
         else:
             # Short: exit if price can't make new lows
-            if current_rate > last_candle["low_recent"] * 1.001:
+            if current_rate > low_recent * 1.001:
                 if current_profit > 0.003:
                     return "momentum_exhausted_short"
 
         # Exit if ROC reverses strongly
-        if not trade.is_short and last_candle["roc"] < -1.5:
+        if not trade.is_short and roc < -1.5:
             return "roc_reversal_down"
-        if trade.is_short and last_candle["roc"] > 1.5:
+        if trade.is_short and roc > 1.5:
             return "roc_reversal_up"
 
         # Exit if volume dries up
-        if last_candle["volume"] < last_candle["volume_ma"] * 0.5:
+        if last_candle["volume"] < volume_ma * 0.5:
             if current_profit > 0:
                 return "volume_dried_up"
 
@@ -361,9 +381,9 @@ class MomentumIgnitionRSI_07(IStrategy):
                 return "time_exit_small_loss"
 
         # Exit if MACD histogram shows strong reversal
-        if not trade.is_short and last_candle["macd_hist"] < -0.0001:
+        if not trade.is_short and macd_hist < -0.0001:
             return "macd_reversal_bearish"
-        if trade.is_short and last_candle["macd_hist"] > 0.0001:
+        if trade.is_short and macd_hist > 0.0001:
             return "macd_reversal_bullish"
 
         return None
@@ -384,8 +404,12 @@ class MomentumIgnitionRSI_07(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current ATR period
+        atr_period = self.atr_period.value
+        atr = last_candle[f"atr_{atr_period}"]
+
         # Dynamic stop based on ATR
-        atr_stop = -(last_candle["atr"] * 2 / trade.open_rate)
+        atr_stop = -(atr * 2 / trade.open_rate)
 
         # Tighten stop as profit increases
         if current_profit > 0.01:
@@ -422,8 +446,12 @@ class MomentumIgnitionRSI_07(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current ATR period
+        atr_period = self.atr_period.value
+        atr = last_candle[f"atr_{atr_period}"]
+
         # Don't enter if ATR is too low (no momentum opportunity)
-        if last_candle["atr"] < last_candle["atr_ma"] * 0.5:
+        if atr < last_candle["atr_ma"] * 0.5:
             return False
 
         # Don't enter if we just had a strong move (avoid chasing)

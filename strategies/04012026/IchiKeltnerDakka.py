@@ -88,51 +88,38 @@ class IchiKeltnerDakka(IStrategy):
         }
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        ichi = self.calculate_ichimoku(
-            dataframe,
-            self.gorkimoku_tenkan.value,
-            self.gorkimoku_kijun.value,
-            self.gorkimoku_senkou.value,
-        )
-        dataframe["ichi_tenkan"] = ichi["tenkan_sen"]
-        dataframe["ichi_kijun"] = ichi["kijun_sen"]
-        dataframe["ichi_senkou_a"] = ichi["senkou_span_a"]
-        dataframe["ichi_senkou_b"] = ichi["senkou_span_b"]
-        dataframe["ichi_chikou"] = ichi["chikou_span"]
+        """
+        Pre-calculates all indicator variants for hyperopt compatibility.
+        Uses memory-efficient approach by pre-calculating rolling components.
+        """
+        # Pre-calculate rolling highs/lows for Ichimoku tenkan periods (50-150)
+        for period in range(50, 151):
+            dataframe[f"high_tenkan_{period}"] = dataframe["high"].rolling(window=period).max()
+            dataframe[f"low_tenkan_{period}"] = dataframe["low"].rolling(window=period).min()
 
-        dataframe["ichi_cloud_green"] = dataframe["ichi_senkou_a"] > dataframe["ichi_senkou_b"]
-        dataframe["ichi_cloud_red"] = dataframe["ichi_senkou_a"] <= dataframe["ichi_senkou_b"]
+        # Pre-calculate rolling highs/lows for Ichimoku kijun periods (15-40)
+        for period in range(15, 41):
+            dataframe[f"high_kijun_{period}"] = dataframe["high"].rolling(window=period).max()
+            dataframe[f"low_kijun_{period}"] = dataframe["low"].rolling(window=period).min()
 
-        dataframe["kumo_top"] = dataframe[["ichi_senkou_a", "ichi_senkou_b"]].max(axis=1)
-        dataframe["kumo_bottom"] = dataframe[["ichi_senkou_a", "ichi_senkou_b"]].min(axis=1)
+        # Pre-calculate rolling highs/lows for Ichimoku senkou periods (30-80)
+        for period in range(30, 81):
+            dataframe[f"high_senkou_{period}"] = dataframe["high"].rolling(window=period).max()
+            dataframe[f"low_senkou_{period}"] = dataframe["low"].rolling(window=period).min()
 
-        dataframe["kumo_breakout_bearish"] = (dataframe["close"] < dataframe["kumo_bottom"]) & (
-            dataframe["close"].shift(1) >= dataframe["kumo_bottom"].shift(1)
-        )
-        dataframe["kumo_breakout_bullish"] = (dataframe["close"] > dataframe["kumo_top"]) & (
-            dataframe["close"].shift(1) <= dataframe["kumo_top"].shift(1)
-        )
+        # Pre-calculate Keltner EMA and ATR for all periods (15-30)
+        for period in range(15, 31):
+            dataframe[f"keltner_ema_{period}"] = ta.EMA(dataframe, timeperiod=period)
+            dataframe[f"keltner_atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        dataframe["kumo_breakout_bearish_3"] = dataframe["kumo_breakout_bearish"].shift(3)
-        dataframe["kumo_breakout_bullish_3"] = dataframe["kumo_breakout_bullish"].shift(3)
+        # Pre-calculate BB range for all periods and deviations
+        for period in range(15, 31):
+            for dev in [1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5]:
+                bb_range = self.calculate_bb_range(dataframe, period, dev)
+                dev_str = str(dev).replace(".", "_")
+                dataframe[f"boombastic_range_2_{period}_{dev_str}"] = bb_range.shift(2)
 
-        keltner_ema = ta.EMA(dataframe, timeperiod=self.squigoth_keltner_period.value)
-        keltner_atr = ta.ATR(dataframe, timeperiod=self.squigoth_keltner_period.value)
-        dataframe["keltner_upper"] = keltner_ema + (self.squigoth_keltner_mult.value * keltner_atr)
-        dataframe["keltner_lower"] = keltner_ema - (self.squigoth_keltner_mult.value * keltner_atr)
-        dataframe["keltner_middle"] = keltner_ema
-
-        dataframe["close_below_keltner_lower"] = dataframe["close"] < dataframe["keltner_lower"]
-        dataframe["close_above_keltner_upper"] = dataframe["close"] > dataframe["keltner_upper"]
-
-        dataframe["close_below_keltner_lower_1"] = dataframe["close_below_keltner_lower"].shift(1)
-        dataframe["close_above_keltner_upper_1"] = dataframe["close_above_keltner_upper"].shift(1)
-
-        dataframe["boombastic_range"] = self.calculate_bb_range(
-            dataframe, self.boombastic_bb_period.value, self.boombastic_bb_dev.value
-        )
-        dataframe["boombastic_range_2"] = dataframe["boombastic_range"].shift(2)
-
+        # Fixed indicators (no hyperopt params)
         dataframe["warboss_high"] = dataframe["high"].rolling(window=24).max()
         dataframe["warboss_low"] = dataframe["low"].rolling(window=24).min()
         dataframe["warboss_high_3"] = dataframe["warboss_high"].shift(3)
@@ -143,13 +130,53 @@ class IchiKeltnerDakka(IStrategy):
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Get current hyperopt parameter values
+        tenkan = self.gorkimoku_tenkan.value
+        kijun = self.gorkimoku_kijun.value
+        senkou = self.gorkimoku_senkou.value
+        keltner_period = self.squigoth_keltner_period.value
+        keltner_mult = self.squigoth_keltner_mult.value
+
+        # Calculate Ichimoku lines from pre-calculated rolling values
+        tenkan_sen = (dataframe[f"high_tenkan_{tenkan}"] + dataframe[f"low_tenkan_{tenkan}"]) / 2
+        kijun_sen = (dataframe[f"high_kijun_{kijun}"] + dataframe[f"low_kijun_{kijun}"]) / 2
+        senkou_span_a = ((tenkan_sen + kijun_sen) / 2).shift(kijun)
+        senkou_span_b = (
+            (dataframe[f"high_senkou_{senkou}"] + dataframe[f"low_senkou_{senkou}"]) / 2
+        ).shift(kijun)
+
+        # Calculate kumo (cloud) values
+        kumo_top = pd.concat([senkou_span_a, senkou_span_b], axis=1).max(axis=1)
+        kumo_bottom = pd.concat([senkou_span_a, senkou_span_b], axis=1).min(axis=1)
+
+        # Calculate kumo breakouts
+        kumo_breakout_bearish = (dataframe["close"] < kumo_bottom) & (
+            dataframe["close"].shift(1) >= kumo_bottom.shift(1)
+        )
+        kumo_breakout_bullish = (dataframe["close"] > kumo_top) & (
+            dataframe["close"].shift(1) <= kumo_top.shift(1)
+        )
+        kumo_breakout_bearish_3 = kumo_breakout_bearish.shift(3)
+        kumo_breakout_bullish_3 = kumo_breakout_bullish.shift(3)
+
+        # Calculate Keltner channels from pre-calculated values
+        keltner_ema = dataframe[f"keltner_ema_{keltner_period}"]
+        keltner_atr = dataframe[f"keltner_atr_{keltner_period}"]
+        keltner_upper = keltner_ema + (keltner_mult * keltner_atr)
+        keltner_lower = keltner_ema - (keltner_mult * keltner_atr)
+
+        close_below_keltner_lower = dataframe["close"] < keltner_lower
+        close_above_keltner_upper = dataframe["close"] > keltner_upper
+        close_below_keltner_lower_1 = close_below_keltner_lower.shift(1)
+        close_above_keltner_upper_1 = close_above_keltner_upper.shift(1)
+
         dataframe.loc[
-            (dataframe["kumo_breakout_bearish_3"]) & (dataframe["close_below_keltner_lower_1"]),
+            (kumo_breakout_bearish_3) & (close_below_keltner_lower_1),
             "enter_long",
         ] = 1
 
         dataframe.loc[
-            (dataframe["kumo_breakout_bullish_3"]) & (dataframe["close_above_keltner_upper_1"]),
+            (kumo_breakout_bullish_3) & (close_above_keltner_upper_1),
             "enter_short",
         ] = 1
 
@@ -173,14 +200,22 @@ class IchiKeltnerDakka(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        bb_period = self.boombastic_bb_period.value
+        bb_dev = round(self.boombastic_bb_dev.value, 1)
+        bb_dev_str = str(bb_dev).replace(".", "_")
+
+        # Select pre-calculated indicator
+        boombastic_range_2 = last_candle[f"boombastic_range_2_{bb_period}_{bb_dev_str}"]
+
         if side == "long":
             orkboy_price = last_candle["warboss_high_3"] - (
-                self.dakka_entry_mult.value * last_candle["boombastic_range_2"]
+                self.dakka_entry_mult.value * boombastic_range_2
             )
             return min(orkboy_price, proposed_rate * 0.998)
         else:
             orkboy_price = last_candle["warboss_low_3"] + (
-                self.dakka_entry_mult.value * last_candle["boombastic_range_2"]
+                self.dakka_entry_mult.value * boombastic_range_2
             )
             return max(orkboy_price, proposed_rate * 1.002)
 
@@ -246,22 +281,30 @@ class IchiKeltnerDakka(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        bb_period = self.boombastic_bb_period.value
+        bb_dev = round(self.boombastic_bb_dev.value, 1)
+        bb_dev_str = str(bb_dev).replace(".", "_")
+
+        # Select pre-calculated indicator
+        boombastic_range_2 = last_candle[f"boombastic_range_2_{bb_period}_{bb_dev_str}"]
+
         if side == "long":
             max_distance = rate * 1.06
             orkboy_price = last_candle["warboss_high_3"] - (
-                self.dakka_entry_mult.value * last_candle["boombastic_range_2"]
+                self.dakka_entry_mult.value * boombastic_range_2
             )
             if orkboy_price > max_distance:
                 return False
         else:
             max_distance = rate * 0.94
             orkboy_price = last_candle["warboss_low_3"] + (
-                self.dakka_entry_mult.value * last_candle["boombastic_range_2"]
+                self.dakka_entry_mult.value * boombastic_range_2
             )
             if orkboy_price < max_distance:
                 return False
 
-        if last_candle["boombastic_range_2"] <= 0:
+        if boombastic_range_2 <= 0:
             return False
 
         return True

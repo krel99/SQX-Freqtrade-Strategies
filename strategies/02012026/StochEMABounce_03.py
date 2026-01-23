@@ -101,115 +101,45 @@ class StochEMABounce_03(IStrategy):
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Adds several different TA indicators to the given DataFrame
+        Pre-calculates all indicator variants for hyperopt compatibility.
         """
 
-        # EMA
-        dataframe["ema50"] = ta.EMA(dataframe, timeperiod=self.ema_period.value)
+        # Pre-calculate EMA for all possible periods (40-60)
+        for period in range(40, 61):
+            dataframe[f"ema_{period}"] = ta.EMA(dataframe, timeperiod=period)
 
-        # Stochastic
-        stoch = ta.STOCH(
-            dataframe,
-            fastk_period=self.stoch_k_period.value,
-            slowk_period=self.stoch_smooth_k.value,
-            slowd_period=self.stoch_smooth_d.value,
-        )
-        dataframe["stoch_k"] = stoch["slowk"]
-        dataframe["stoch_d"] = stoch["slowd"]
+        # Pre-calculate Stochastic for all combinations
+        # stoch_k_period: 10-20, stoch_smooth_k: 2-5, stoch_smooth_d: 2-5
+        for k_period in range(10, 21):
+            for smooth_k in range(2, 6):
+                for smooth_d in range(2, 6):
+                    stoch = ta.STOCH(
+                        dataframe,
+                        fastk_period=k_period,
+                        slowk_period=smooth_k,
+                        slowd_period=smooth_d,
+                    )
+                    dataframe[f"stoch_k_{k_period}_{smooth_k}_{smooth_d}"] = stoch["slowk"]
+                    dataframe[f"stoch_d_{k_period}_{smooth_k}_{smooth_d}"] = stoch["slowd"]
 
-        # Volume
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_ok"] = dataframe["volume"] > (
-            dataframe["volume_ma"] * self.volume_threshold.value
-        )
+        # Pre-calculate Volume MA for all periods (15-30)
+        for period in range(15, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
-        # ATR for dynamic stops
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
+        # Pre-calculate ATR for all periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        # Price position relative to EMA
-        dataframe["close_pct_from_ema"] = (
-            dataframe["close"] - dataframe["ema50"]
-        ) / dataframe["ema50"]
-        dataframe["high_pct_from_ema"] = (
-            dataframe["high"] - dataframe["ema50"]
-        ) / dataframe["ema50"]
-        dataframe["low_pct_from_ema"] = (
-            dataframe["low"] - dataframe["ema50"]
-        ) / dataframe["ema50"]
-
-        # EMA touch detection
-        dataframe["ema_touch"] = (
-            (abs(dataframe["close_pct_from_ema"]) < self.ema_touch_threshold.value)
-            | (abs(dataframe["high_pct_from_ema"]) < self.ema_touch_threshold.value)
-            | (abs(dataframe["low_pct_from_ema"]) < self.ema_touch_threshold.value)
-        )
-
-        # Wick analysis for rejection
+        # Wick analysis for rejection (no hyperopt params here)
         dataframe["body_size"] = abs(dataframe["close"] - dataframe["open"])
         dataframe["candle_range"] = dataframe["high"] - dataframe["low"]
-        dataframe["upper_wick"] = dataframe["high"] - dataframe[["close", "open"]].max(
-            axis=1
-        )
-        dataframe["lower_wick"] = (
-            dataframe[["close", "open"]].min(axis=1) - dataframe["low"]
-        )
+        dataframe["upper_wick"] = dataframe["high"] - dataframe[["close", "open"]].max(axis=1)
+        dataframe["lower_wick"] = dataframe[["close", "open"]].min(axis=1) - dataframe["low"]
 
-        # Bullish rejection (lower wick through EMA, close above)
-        dataframe["bullish_rejection"] = (
-            (dataframe["low"] <= dataframe["ema50"])  # Low pierces EMA
-            & (dataframe["close"] > dataframe["ema50"])  # Close above EMA
-            & (
-                dataframe["lower_wick"]
-                > (dataframe["candle_range"] * self.wick_ratio_min.value)
-            )  # Significant lower wick
-        )
-
-        # Bearish rejection (upper wick through EMA, close below)
-        dataframe["bearish_rejection"] = (
-            (dataframe["high"] >= dataframe["ema50"])  # High pierces EMA
-            & (dataframe["close"] < dataframe["ema50"])  # Close below EMA
-            & (
-                dataframe["upper_wick"]
-                > (dataframe["candle_range"] * self.wick_ratio_min.value)
-            )  # Significant upper wick
-        )
-
-        # Stochastic conditions
-        dataframe["stoch_oversold"] = (
-            dataframe["stoch_k"] < self.stoch_oversold.value
-        ) & (dataframe["stoch_d"] < self.stoch_oversold.value)
-
-        dataframe["stoch_overbought"] = (
-            dataframe["stoch_k"] > self.stoch_overbought.value
-        ) & (dataframe["stoch_d"] > self.stoch_overbought.value)
-
-        # Stochastic divergence detection (simple version)
+        # Stochastic divergence detection (simple version) - uses fixed lookback
         lookback = 10
         dataframe["price_lower"] = dataframe["low"] < dataframe["low"].shift(lookback)
-        dataframe["stoch_higher"] = dataframe["stoch_k"] > dataframe["stoch_k"].shift(
-            lookback
-        )
-        dataframe["bullish_div"] = dataframe["price_lower"] & dataframe["stoch_higher"]
-
-        dataframe["price_higher"] = dataframe["high"] > dataframe["high"].shift(
-            lookback
-        )
-        dataframe["stoch_lower"] = dataframe["stoch_k"] < dataframe["stoch_k"].shift(
-            lookback
-        )
-        dataframe["bearish_div"] = dataframe["price_higher"] & dataframe["stoch_lower"]
-
-        # Trend conditions
-        dataframe["uptrend"] = dataframe["close"] > dataframe["ema50"]
-        dataframe["downtrend"] = dataframe["close"] < dataframe["ema50"]
-
-        # EMA slope for trend strength
-        dataframe["ema_slope"] = (
-            (dataframe["ema50"] - dataframe["ema50"].shift(5))
-            / dataframe["ema50"].shift(5)
-            * 100
-        )
+        dataframe["price_higher"] = dataframe["high"] > dataframe["high"].shift(lookback)
 
         return dataframe
 
@@ -218,21 +148,82 @@ class StochEMABounce_03(IStrategy):
         Based on TA indicators, populates the entry signals
         """
 
+        # Get current hyperopt parameter values
+        ema_period = self.ema_period.value
+        stoch_k_period = self.stoch_k_period.value
+        stoch_smooth_k = self.stoch_smooth_k.value
+        stoch_smooth_d = self.stoch_smooth_d.value
+        volume_ma_period = self.volume_ma_period.value
+        volume_threshold = self.volume_threshold.value
+        ema_touch_threshold = self.ema_touch_threshold.value
+        wick_ratio_min = self.wick_ratio_min.value
+        stoch_oversold = self.stoch_oversold.value
+        stoch_overbought = self.stoch_overbought.value
+
+        # Select pre-calculated indicators
+        ema = dataframe[f"ema_{ema_period}"]
+        stoch_k = dataframe[f"stoch_k_{stoch_k_period}_{stoch_smooth_k}_{stoch_smooth_d}"]
+        stoch_d = dataframe[f"stoch_d_{stoch_k_period}_{stoch_smooth_k}_{stoch_smooth_d}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+
+        # Calculate derived indicators using selected values
+        close_pct_from_ema = (dataframe["close"] - ema) / ema
+        high_pct_from_ema = (dataframe["high"] - ema) / ema
+        low_pct_from_ema = (dataframe["low"] - ema) / ema
+
+        # EMA touch detection
+        ema_touch = (
+            (abs(close_pct_from_ema) < ema_touch_threshold)
+            | (abs(high_pct_from_ema) < ema_touch_threshold)
+            | (abs(low_pct_from_ema) < ema_touch_threshold)
+        )
+
+        # Volume check
+        volume_ok = dataframe["volume"] > (volume_ma * volume_threshold)
+
+        # Bullish rejection (lower wick through EMA, close above)
+        bullish_rejection = (
+            (dataframe["low"] <= ema)  # Low pierces EMA
+            & (dataframe["close"] > ema)  # Close above EMA
+            & (dataframe["lower_wick"] > (dataframe["candle_range"] * wick_ratio_min))
+        )
+
+        # Bearish rejection (upper wick through EMA, close below)
+        bearish_rejection = (
+            (dataframe["high"] >= ema)  # High pierces EMA
+            & (dataframe["close"] < ema)  # Close below EMA
+            & (dataframe["upper_wick"] > (dataframe["candle_range"] * wick_ratio_min))
+        )
+
+        # Stochastic conditions
+        stoch_oversold_cond = (stoch_k < stoch_oversold) & (stoch_d < stoch_oversold)
+        stoch_overbought_cond = (stoch_k > stoch_overbought) & (stoch_d > stoch_overbought)
+
+        # Trend conditions
+        uptrend = dataframe["close"] > ema
+        downtrend = dataframe["close"] < ema
+
+        # EMA slope for trend strength
+        ema_slope = (ema - ema.shift(5)) / ema.shift(5) * 100
+
+        # Stochastic divergence
+        lookback = 10
+        stoch_higher = stoch_k > stoch_k.shift(lookback)
+        stoch_lower = stoch_k < stoch_k.shift(lookback)
+        bullish_div = dataframe["price_lower"] & stoch_higher
+        bearish_div = dataframe["price_higher"] & stoch_lower
+
         # LONG ENTRY
         dataframe.loc[
             (
-                (dataframe["uptrend"])  # Uptrend
-                & (dataframe["stoch_oversold"])  # Oversold
+                (uptrend)  # Uptrend
+                & (stoch_oversold_cond)  # Oversold
+                & (bullish_rejection | ema_touch)  # EMA bounce
+                & (volume_ok)  # Volume confirmation
+                & (ema_slope > 0)  # EMA trending up
                 & (
-                    dataframe["bullish_rejection"] | dataframe["ema_touch"]
-                )  # EMA bounce
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["ema_slope"] > 0)  # EMA trending up
-                & (
-                    dataframe["bullish_div"]  # Bonus: bullish divergence
-                    | (
-                        dataframe["stoch_k"] > dataframe["stoch_k"].shift(1)
-                    )  # Or stoch turning up
+                    bullish_div  # Bonus: bullish divergence
+                    | (stoch_k > stoch_k.shift(1))  # Or stoch turning up
                 )
             ),
             "enter_long",
@@ -241,18 +232,14 @@ class StochEMABounce_03(IStrategy):
         # SHORT ENTRY
         dataframe.loc[
             (
-                (dataframe["downtrend"])  # Downtrend
-                & (dataframe["stoch_overbought"])  # Overbought
+                (downtrend)  # Downtrend
+                & (stoch_overbought_cond)  # Overbought
+                & (bearish_rejection | ema_touch)  # EMA bounce
+                & (volume_ok)  # Volume confirmation
+                & (ema_slope < 0)  # EMA trending down
                 & (
-                    dataframe["bearish_rejection"] | dataframe["ema_touch"]
-                )  # EMA bounce
-                & (dataframe["volume_ok"])  # Volume confirmation
-                & (dataframe["ema_slope"] < 0)  # EMA trending down
-                & (
-                    dataframe["bearish_div"]  # Bonus: bearish divergence
-                    | (
-                        dataframe["stoch_k"] < dataframe["stoch_k"].shift(1)
-                    )  # Or stoch turning down
+                    bearish_div  # Bonus: bearish divergence
+                    | (stoch_k < stoch_k.shift(1))  # Or stoch turning down
                 )
             ),
             "enter_short",
@@ -265,18 +252,48 @@ class StochEMABounce_03(IStrategy):
         Based on TA indicators, populates the exit signals
         """
 
+        # Get current hyperopt parameter values
+        ema_period = self.ema_period.value
+        stoch_k_period = self.stoch_k_period.value
+        stoch_smooth_k = self.stoch_smooth_k.value
+        stoch_smooth_d = self.stoch_smooth_d.value
+        stoch_exit_long = self.stoch_exit_long.value
+        stoch_exit_short = self.stoch_exit_short.value
+        wick_ratio_min = self.wick_ratio_min.value
+
+        # Select pre-calculated indicators
+        ema = dataframe[f"ema_{ema_period}"]
+        stoch_k = dataframe[f"stoch_k_{stoch_k_period}_{stoch_smooth_k}_{stoch_smooth_d}"]
+        stoch_d = dataframe[f"stoch_d_{stoch_k_period}_{stoch_smooth_k}_{stoch_smooth_d}"]
+
+        # Calculate derived indicators
+        uptrend = dataframe["close"] > ema
+        downtrend = dataframe["close"] < ema
+
+        # Bullish rejection (lower wick through EMA, close above)
+        bullish_rejection = (
+            (dataframe["low"] <= ema)
+            & (dataframe["close"] > ema)
+            & (dataframe["lower_wick"] > (dataframe["candle_range"] * wick_ratio_min))
+        )
+
+        # Bearish rejection (upper wick through EMA, close below)
+        bearish_rejection = (
+            (dataframe["high"] >= ema)
+            & (dataframe["close"] < ema)
+            & (dataframe["upper_wick"] > (dataframe["candle_range"] * wick_ratio_min))
+        )
+
         # LONG EXIT
         dataframe.loc[
             (
-                (
-                    dataframe["stoch_k"] > self.stoch_exit_long.value
-                )  # Stochastic exit level
-                | (dataframe["downtrend"])  # Trend change
+                (stoch_k > stoch_exit_long)  # Stochastic exit level
+                | (downtrend)  # Trend change
                 | (
-                    (dataframe["stoch_k"] < dataframe["stoch_d"])  # Stoch bearish cross
-                    & (dataframe["stoch_k"].shift(1) >= dataframe["stoch_d"].shift(1))
+                    (stoch_k < stoch_d)  # Stoch bearish cross
+                    & (stoch_k.shift(1) >= stoch_d.shift(1))
                 )
-                | (dataframe["bearish_rejection"])  # Strong bearish rejection
+                | (bearish_rejection)  # Strong bearish rejection
             ),
             "exit_long",
         ] = 1
@@ -284,15 +301,13 @@ class StochEMABounce_03(IStrategy):
         # SHORT EXIT
         dataframe.loc[
             (
-                (
-                    dataframe["stoch_k"] < self.stoch_exit_short.value
-                )  # Stochastic exit level
-                | (dataframe["uptrend"])  # Trend change
+                (stoch_k < stoch_exit_short)  # Stochastic exit level
+                | (uptrend)  # Trend change
                 | (
-                    (dataframe["stoch_k"] > dataframe["stoch_d"])  # Stoch bullish cross
-                    & (dataframe["stoch_k"].shift(1) <= dataframe["stoch_d"].shift(1))
+                    (stoch_k > stoch_d)  # Stoch bullish cross
+                    & (stoch_k.shift(1) <= stoch_d.shift(1))
                 )
-                | (dataframe["bullish_rejection"])  # Strong bullish rejection
+                | (bullish_rejection)  # Strong bullish rejection
             ),
             "exit_short",
         ] = 1
@@ -315,18 +330,37 @@ class StochEMABounce_03(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        ema_period = self.ema_period.value
+        stoch_k_period = self.stoch_k_period.value
+        stoch_smooth_k = self.stoch_smooth_k.value
+        stoch_smooth_d = self.stoch_smooth_d.value
+
+        # Select pre-calculated indicators
+        stoch_k = last_candle[f"stoch_k_{stoch_k_period}_{stoch_smooth_k}_{stoch_smooth_d}"]
+        stoch_d = last_candle[f"stoch_d_{stoch_k_period}_{stoch_smooth_k}_{stoch_smooth_d}"]
+        ema = last_candle[f"ema_{ema_period}"]
+
+        # Calculate EMA slope from dataframe
+        ema_col = dataframe[f"ema_{ema_period}"]
+        ema_slope = (
+            ((ema_col.iloc[-1] - ema_col.iloc[-6]) / ema_col.iloc[-6] * 100)
+            if len(dataframe) > 5
+            else 0
+        )
+
         # Exit if stochastic reaches extreme levels
-        if not trade.is_short and last_candle["stoch_k"] > 85:
+        if not trade.is_short and stoch_k > 85:
             return "stoch_extreme_overbought"
 
-        if trade.is_short and last_candle["stoch_k"] < 15:
+        if trade.is_short and stoch_k < 15:
             return "stoch_extreme_oversold"
 
         # Exit on strong momentum shift
-        if not trade.is_short and last_candle["ema_slope"] < -0.2:
+        if not trade.is_short and ema_slope < -0.2:
             return "ema_momentum_down"
 
-        if trade.is_short and last_candle["ema_slope"] > 0.2:
+        if trade.is_short and ema_slope > 0.2:
             return "ema_momentum_up"
 
         # Time-based exit if trade is not performing
@@ -336,9 +370,9 @@ class StochEMABounce_03(IStrategy):
 
         # Protect profits after significant move
         if current_profit > 0.02:
-            if not trade.is_short and last_candle["stoch_k"] < last_candle["stoch_d"]:
+            if not trade.is_short and stoch_k < stoch_d:
                 return "profit_protection_long"
-            if trade.is_short and last_candle["stoch_k"] > last_candle["stoch_d"]:
+            if trade.is_short and stoch_k > stoch_d:
                 return "profit_protection_short"
 
         return None
@@ -359,8 +393,15 @@ class StochEMABounce_03(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter values
+        atr_period = self.atr_period.value
+        atr_multiplier = self.atr_multiplier.value
+
+        # Select pre-calculated ATR
+        atr = last_candle[f"atr_{atr_period}"]
+
         # Dynamic stop based on ATR
-        atr_stop = -(last_candle["atr"] * self.atr_multiplier.value / trade.open_rate)
+        atr_stop = -(atr * atr_multiplier / trade.open_rate)
 
         # Use the tighter of ATR stop or default stop
         dynamic_stop = max(atr_stop, self.stoploss)

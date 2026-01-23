@@ -17,6 +17,10 @@ class ForexDogBase(IStrategy):
     """
     Base strategy for ForexDog variations
     Contains all common parameters and indicator calculations
+
+    FIXED: Hyperopt parameters now used in populate_entry_trend/populate_exit_trend
+    instead of populate_indicators for proper hyperopt compatibility.
+    Pre-calculates EMAs for all possible parameter values.
     """
 
     # Hyperparameters
@@ -86,24 +90,112 @@ class ForexDogBase(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Populate indicators that will be used in the strategy.
-        This method is called for each pair with each timeframe.
+        Pre-calculate EMAs for all possible parameter values.
+        This ensures hyperopt works correctly by having all variants available.
         """
-        # Populate all 12 EMAs
-        for i in range(1, 13):
-            p_val = getattr(self, f"ema_p{i}").value
-            dataframe[f"ema_{i}"] = ta.EMA(dataframe, timeperiod=p_val)
+        # Pre-calculate EMAs for all possible periods across all parameter ranges
+        # EMA p1: 3-12
+        for p in range(3, 13):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
 
-        # ATR for stoploss
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
+        # EMA p2: 13-27
+        for p in range(13, 28):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
 
-        # RSI for V2
+        # EMA p3: 28-45
+        for p in range(28, 46):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # EMA p4: 46-65
+        for p in range(46, 66):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # EMA p5: 66-90
+        for p in range(66, 91):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # EMA p6: 91-140
+        for p in range(91, 141):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # EMA p7: 141-300
+        for p in range(141, 301):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # EMA p8: 301-520
+        for p in range(301, 521):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # EMA p9: 521-1120
+        for p in range(521, 1121):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # EMA p10: 1121-1760
+        for p in range(1121, 1761):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # EMA p11: 1761-2560
+        for p in range(1761, 2561):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # EMA p12: 2561-4000
+        for p in range(2561, 4001):
+            dataframe[f"ema_period_{p}"] = ta.EMA(dataframe, timeperiod=p)
+
+        # Pre-calculate ATR for all possible periods (10-20)
+        for p in range(10, 21):
+            dataframe[f"atr_{p}"] = ta.ATR(dataframe, timeperiod=p)
+
+        # RSI for V2 (fixed period, not hyperoptimized in base)
         dataframe["rsi"] = ta.RSI(dataframe, timeperiod=14)
 
-        # Volume MA for V3
+        # Volume MA for V3 (fixed period, not hyperoptimized in base)
         dataframe["volume_ma"] = ta.SMA(dataframe["volume"], timeperiod=20)
 
         return dataframe
+
+    def get_ema_columns(self, dataframe: DataFrame) -> dict:
+        """
+        Get the EMA columns based on current hyperopt parameter values.
+        Returns a dict with ema_1 through ema_12 mapped to actual column names.
+        """
+        return {
+            "ema_1": dataframe[f"ema_period_{self.ema_p1.value}"],
+            "ema_2": dataframe[f"ema_period_{self.ema_p2.value}"],
+            "ema_3": dataframe[f"ema_period_{self.ema_p3.value}"],
+            "ema_4": dataframe[f"ema_period_{self.ema_p4.value}"],
+            "ema_5": dataframe[f"ema_period_{self.ema_p5.value}"],
+            "ema_6": dataframe[f"ema_period_{self.ema_p6.value}"],
+            "ema_7": dataframe[f"ema_period_{self.ema_p7.value}"],
+            "ema_8": dataframe[f"ema_period_{self.ema_p8.value}"],
+            "ema_9": dataframe[f"ema_period_{self.ema_p9.value}"],
+            "ema_10": dataframe[f"ema_period_{self.ema_p10.value}"],
+            "ema_11": dataframe[f"ema_period_{self.ema_p11.value}"],
+            "ema_12": dataframe[f"ema_period_{self.ema_p12.value}"],
+        }
+
+    def get_atr(self, dataframe: DataFrame):
+        """Get ATR column based on current hyperopt parameter value."""
+        return dataframe[f"atr_{self.atr_period.value}"]
+
+    def get_ema_by_number(self, dataframe: DataFrame, ema_num: int):
+        """Get specific EMA by number (1-12) based on current hyperopt values."""
+        ema_params = [
+            self.ema_p1,
+            self.ema_p2,
+            self.ema_p3,
+            self.ema_p4,
+            self.ema_p5,
+            self.ema_p6,
+            self.ema_p7,
+            self.ema_p8,
+            self.ema_p9,
+            self.ema_p10,
+            self.ema_p11,
+            self.ema_p12,
+        ]
+        period = ema_params[ema_num - 1].value
+        return dataframe[f"ema_period_{period}"]
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """

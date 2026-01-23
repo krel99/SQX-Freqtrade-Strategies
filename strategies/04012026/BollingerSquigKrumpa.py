@@ -56,47 +56,64 @@ class BollingerSquigKrumpa(IStrategy):
         return ranges.rolling(window=period).max()
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe["grot_bb_upper"], dataframe["grot_bb_middle"], dataframe["grot_bb_lower"] = (
-            ta.BBANDS(
-                dataframe["close"], timeperiod=self.grot_bb_period.value, nbdevup=1.9, nbdevdn=1.9
+        # Pre-calculate Bollinger Bands for all grot_bb_period values (10-40)
+        for period in range(10, 41):
+            upper, middle, lower = ta.BBANDS(
+                dataframe["close"], timeperiod=period, nbdevup=1.9, nbdevdn=1.9
             )
-        )
+            dataframe[f"grot_bb_upper_{period}"] = upper
+            dataframe[f"grot_bb_middle_{period}"] = middle
+            dataframe[f"grot_bb_lower_{period}"] = lower
 
-        dataframe["dakka_bb_upper"], dataframe["dakka_bb_middle"], dataframe["dakka_bb_lower"] = (
-            ta.BBANDS(
-                dataframe["close"], timeperiod=self.dakka_bb_period.value, nbdevup=2.0, nbdevdn=2.0
+        # Pre-calculate Bollinger Bands for all dakka_bb_period values (30-80)
+        for period in range(30, 81):
+            upper, middle, lower = ta.BBANDS(
+                dataframe["close"], timeperiod=period, nbdevup=2.0, nbdevdn=2.0
             )
-        )
+            dataframe[f"dakka_bb_upper_{period}"] = upper
+            dataframe[f"dakka_bb_middle_{period}"] = middle
+            dataframe[f"dakka_bb_lower_{period}"] = lower
 
-        dataframe["stompa_range"] = self.calculate_biggest_range(
-            dataframe, self.stompa_range_period.value
-        )
+        # Pre-calculate stompa_range for all periods (20-80)
+        for period in range(20, 81):
+            dataframe[f"stompa_range_{period}"] = self.calculate_biggest_range(dataframe, period)
 
         dataframe["warboss_atr"] = ta.ATR(dataframe, timeperiod=20)
 
         dataframe["grot_open_3"] = dataframe["open"].shift(3)
         dataframe["grot_open_1"] = dataframe["open"].shift(1)
-        dataframe["grot_bb_lower_4"] = dataframe["grot_bb_lower"].shift(4)
-        dataframe["grot_bb_upper_4"] = dataframe["grot_bb_upper"].shift(4)
-        dataframe["dakka_bb_lower_2"] = dataframe["dakka_bb_lower"].shift(2)
-        dataframe["dakka_bb_upper_2"] = dataframe["dakka_bb_upper"].shift(2)
-        dataframe["stompa_range_2"] = dataframe["stompa_range"].shift(2)
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        # Get current hyperopt parameter values
+        grot_bb_period = self.grot_bb_period.value
+        dakka_bb_period = self.dakka_bb_period.value
+
+        # Select pre-calculated indicators
+        grot_bb_lower = dataframe[f"grot_bb_lower_{grot_bb_period}"]
+        grot_bb_upper = dataframe[f"grot_bb_upper_{grot_bb_period}"]
+        dakka_bb_lower = dataframe[f"dakka_bb_lower_{dakka_bb_period}"]
+        dakka_bb_upper = dataframe[f"dakka_bb_upper_{dakka_bb_period}"]
+
+        # Calculate shifted values
+        grot_bb_lower_4 = grot_bb_lower.shift(4)
+        grot_bb_upper_4 = grot_bb_upper.shift(4)
+        dakka_bb_lower_2 = dakka_bb_lower.shift(2)
+        dakka_bb_upper_2 = dakka_bb_upper.shift(2)
+
         dataframe.loc[
             (
-                (dataframe["grot_open_3"] > dataframe["grot_bb_lower_4"])
-                & (dataframe["grot_open_1"] > dataframe["dakka_bb_lower_2"])
+                (dataframe["grot_open_3"] > grot_bb_lower_4)
+                & (dataframe["grot_open_1"] > dakka_bb_lower_2)
             ),
             "enter_long",
         ] = 1
 
         dataframe.loc[
             (
-                (dataframe["grot_open_3"] < dataframe["grot_bb_upper_4"])
-                & (dataframe["grot_open_1"] < dataframe["dakka_bb_upper_2"])
+                (dataframe["grot_open_3"] < grot_bb_upper_4)
+                & (dataframe["grot_open_1"] < dakka_bb_upper_2)
             ),
             "enter_short",
         ] = 1
@@ -140,12 +157,19 @@ class BollingerSquigKrumpa(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get current hyperopt parameter value
+        stompa_range_period = self.stompa_range_period.value
+
+        # Select pre-calculated indicator and shift
+        stompa_range = dataframe[f"stompa_range_{stompa_range_period}"]
+        stompa_range_2 = stompa_range.shift(2).iloc[-1]
+
         if side == "long":
-            squig_price = rate + (self.squig_mult.value * last_candle["stompa_range_2"])
+            squig_price = rate + (self.squig_mult.value * stompa_range_2)
             if squig_price > rate * 1.05:
                 return False
         else:
-            squig_price = rate - (self.squig_mult.value * last_candle["stompa_range_2"])
+            squig_price = rate - (self.squig_mult.value * stompa_range_2)
             if squig_price < rate * 0.95:
                 return False
 

@@ -34,6 +34,9 @@ class ConsolidationBreakout_05(IStrategy):
     - Dynamic lookback period based on volatility
     - Better volume spike detection
     - Support/resistance flip confirmation
+
+    FIXED: Hyperopt parameters now used in populate_entry_trend/populate_exit_trend
+    instead of populate_indicators for proper hyperopt compatibility.
     """
 
     # Strategy interface version
@@ -100,41 +103,28 @@ class ConsolidationBreakout_05(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Adds several different TA indicators to the given DataFrame
+        Pre-calculate indicators for all possible hyperopt parameter values.
+        This ensures hyperopt works correctly by having all variants available.
         """
 
-        # Calculate range high and low
-        dataframe["range_high"] = (
-            dataframe["high"].rolling(window=self.lookback_period.value).max()
-        )
-        dataframe["range_low"] = (
-            dataframe["low"].rolling(window=self.lookback_period.value).min()
-        )
+        # Pre-calculate range high and low for all possible lookback periods (15-30)
+        for period in range(15, 31):
+            dataframe[f"range_high_{period}"] = dataframe["high"].rolling(window=period).max()
+            dataframe[f"range_low_{period}"] = dataframe["low"].rolling(window=period).min()
 
-        # Range width
-        dataframe["range_width"] = dataframe["range_high"] - dataframe["range_low"]
-        dataframe["range_width_pct"] = (
-            dataframe["range_width"] / dataframe["range_low"] * 100
-        )
+        # Pre-calculate Volume MA for all possible periods (15-30)
+        for period in range(15, 31):
+            dataframe[f"volume_ma_{period}"] = ta.SMA(dataframe["volume"], timeperiod=period)
 
-        # Midpoint of the range
-        dataframe["range_mid"] = (dataframe["range_high"] + dataframe["range_low"]) / 2
+        # Pre-calculate ATR for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"atr_{period}"] = ta.ATR(dataframe, timeperiod=period)
 
-        # Volume
-        dataframe["volume_ma"] = ta.SMA(
-            dataframe["volume"], timeperiod=self.volume_ma_period.value
-        )
-        dataframe["volume_spike"] = dataframe["volume"] > (
-            dataframe["volume_ma"] * self.volume_spike_mult.value
-        )
+        # Pre-calculate RSI for all possible periods (10-20)
+        for period in range(10, 21):
+            dataframe[f"rsi_{period}"] = ta.RSI(dataframe, timeperiod=period)
 
-        # ATR for volatility measurement
-        dataframe["atr"] = ta.ATR(dataframe, timeperiod=self.atr_period.value)
-
-        # RSI for momentum confirmation
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=self.rsi_period.value)
-
-        # EMA for trend context
+        # EMA for trend context (fixed periods)
         dataframe["ema50"] = ta.EMA(dataframe, timeperiod=50)
         dataframe["ema200"] = ta.EMA(dataframe, timeperiod=200)
 
@@ -142,64 +132,12 @@ class ConsolidationBreakout_05(IStrategy):
         dataframe["uptrend"] = dataframe["ema50"] > dataframe["ema200"]
         dataframe["downtrend"] = dataframe["ema50"] < dataframe["ema200"]
 
-        # Consolidation detection
-        # Check if range is narrow relative to ATR
-        dataframe["range_atr_ratio"] = dataframe["range_width"] / dataframe["atr"]
-        dataframe["is_consolidating"] = (
-            (dataframe["range_atr_ratio"] < self.consolidation_atr_max.value * 2)
-            & (dataframe["range_width_pct"] < 3.0)  # Range less than 3%
-        )
-
-        # Count consecutive consolidation candles
-        dataframe["consol_count"] = (
-            dataframe["is_consolidating"]
-            .rolling(window=self.min_consolidation_candles.value, min_periods=1)
-            .sum()
-        )
-
-        # Breakout detection
-        dataframe["breakout_up"] = (
-            dataframe["close"]
-            > dataframe["range_high"] * (1 + self.breakout_buffer.value)
-        ) & (dataframe["close"].shift(1) <= dataframe["range_high"].shift(1))
-
-        dataframe["breakout_down"] = (
-            dataframe["close"]
-            < dataframe["range_low"] * (1 - self.breakout_buffer.value)
-        ) & (dataframe["close"].shift(1) >= dataframe["range_low"].shift(1))
-
-        # False breakout detection - price quickly returns to range
-        dataframe["false_breakout_up"] = dataframe["breakout_up"].shift(1) & (
-            dataframe["close"] < dataframe["range_high"]
-        )
-
-        dataframe["false_breakout_down"] = dataframe["breakout_down"].shift(1) & (
-            dataframe["close"] > dataframe["range_low"]
-        )
-
-        # Momentum at breakout
+        # Price momentum (fixed)
         dataframe["momentum"] = (
-            (dataframe["close"] - dataframe["close"].shift(5))
-            / dataframe["close"].shift(5)
-            * 100
+            (dataframe["close"] - dataframe["close"].shift(5)) / dataframe["close"].shift(5) * 100
         )
 
-        # Support becomes resistance and vice versa
-        dataframe["close_above_prev_high"] = dataframe["close"] > dataframe[
-            "range_high"
-        ].shift(1)
-        dataframe["close_below_prev_low"] = dataframe["close"] < dataframe[
-            "range_low"
-        ].shift(1)
-
-        # Price position within range
-        dataframe["range_position"] = np.where(
-            dataframe["range_width"] > 0,
-            (dataframe["close"] - dataframe["range_low"]) / dataframe["range_width"],
-            0.5,
-        )
-
-        # Candle patterns
+        # Candle patterns (fixed)
         dataframe["bullish_candle"] = dataframe["close"] > dataframe["open"]
         dataframe["bearish_candle"] = dataframe["close"] < dataframe["open"]
         dataframe["candle_body"] = abs(dataframe["close"] - dataframe["open"])
@@ -217,28 +155,68 @@ class ConsolidationBreakout_05(IStrategy):
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on TA indicators, populates the entry signals
+        Based on TA indicators, populates the entry signals.
+        Hyperopt parameters are used here so they're evaluated each epoch.
         """
+        # Get hyperopt parameter values
+        lookback = self.lookback_period.value
+        volume_ma_period = self.volume_ma_period.value
+        atr_period = self.atr_period.value
+        rsi_period = self.rsi_period.value
+
+        # Get pre-calculated indicators for current hyperopt values
+        range_high = dataframe[f"range_high_{lookback}"]
+        range_low = dataframe[f"range_low_{lookback}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+        atr = dataframe[f"atr_{atr_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
+
+        # Calculate derived values using hyperopt parameters
+        range_width = range_high - range_low
+        range_width_pct = range_width / range_low * 100
+        range_mid = (range_high + range_low) / 2
+
+        # Volume spike detection
+        volume_spike = dataframe["volume"] > (volume_ma * self.volume_spike_mult.value)
+
+        # Consolidation detection using hyperopt parameters
+        range_atr_ratio = range_width / atr
+        is_consolidating = (range_atr_ratio < self.consolidation_atr_max.value * 2) & (
+            range_width_pct < 3.0
+        )
+
+        # Count consecutive consolidation candles
+        consol_count = is_consolidating.rolling(
+            window=self.min_consolidation_candles.value, min_periods=1
+        ).sum()
+
+        # Breakout detection using hyperopt buffer
+        breakout_up = (dataframe["close"] > range_high * (1 + self.breakout_buffer.value)) & (
+            dataframe["close"].shift(1) <= range_high.shift(1)
+        )
+
+        breakout_down = (dataframe["close"] < range_low * (1 - self.breakout_buffer.value)) & (
+            dataframe["close"].shift(1) >= range_low.shift(1)
+        )
+
+        # False breakout detection
+        false_breakout_up = breakout_up.shift(1) & (dataframe["close"] < range_high)
+        false_breakout_down = breakout_down.shift(1) & (dataframe["close"] > range_low)
+
+        # ATR threshold check
+        atr_ok = atr > atr.rolling(20).mean() * 0.8
 
         # LONG ENTRY - Breakout up
         dataframe.loc[
             (
-                (dataframe["breakout_up"])  # Price breaks above range high
-                & (dataframe["volume_spike"])  # Volume confirmation
-                & (
-                    dataframe["consol_count"] >= self.min_consolidation_candles.value
-                )  # Sufficient consolidation
-                & (
-                    dataframe["rsi"] > self.rsi_breakout_up.value
-                )  # RSI momentum confirmation
+                (breakout_up)  # Price breaks above range high
+                & (volume_spike)  # Volume confirmation
+                & (consol_count >= self.min_consolidation_candles.value)  # Sufficient consolidation
+                & (rsi > self.rsi_breakout_up.value)  # RSI momentum confirmation
                 & (dataframe["momentum"] > 0.5)  # Positive momentum
-                & (
-                    dataframe["false_breakout_up"].shift(1) == False
-                )  # No recent false breakout
+                & (false_breakout_up.shift(1) == False)  # No recent false breakout
                 & (dataframe["strong_bullish"])  # Strong bullish candle
-                & (
-                    dataframe["atr"] > dataframe["atr"].rolling(20).mean() * 0.8
-                )  # Volatility not too low
+                & (atr_ok)  # Volatility not too low
             ),
             "enter_long",
         ] = 1
@@ -246,22 +224,14 @@ class ConsolidationBreakout_05(IStrategy):
         # SHORT ENTRY - Breakout down
         dataframe.loc[
             (
-                (dataframe["breakout_down"])  # Price breaks below range low
-                & (dataframe["volume_spike"])  # Volume confirmation
-                & (
-                    dataframe["consol_count"] >= self.min_consolidation_candles.value
-                )  # Sufficient consolidation
-                & (
-                    dataframe["rsi"] < self.rsi_breakout_down.value
-                )  # RSI momentum confirmation
+                (breakout_down)  # Price breaks below range low
+                & (volume_spike)  # Volume confirmation
+                & (consol_count >= self.min_consolidation_candles.value)  # Sufficient consolidation
+                & (rsi < self.rsi_breakout_down.value)  # RSI momentum confirmation
                 & (dataframe["momentum"] < -0.5)  # Negative momentum
-                & (
-                    dataframe["false_breakout_down"].shift(1) == False
-                )  # No recent false breakout
+                & (false_breakout_down.shift(1) == False)  # No recent false breakout
                 & (dataframe["strong_bearish"])  # Strong bearish candle
-                & (
-                    dataframe["atr"] > dataframe["atr"].rolling(20).mean() * 0.8
-                )  # Volatility not too low
+                & (atr_ok)  # Volatility not too low
             ),
             "enter_short",
         ] = 1
@@ -270,30 +240,34 @@ class ConsolidationBreakout_05(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Based on TA indicators, populates the exit signals
+        Based on TA indicators, populates the exit signals.
+        Hyperopt parameters are used here so they're evaluated each epoch.
         """
+        # Get hyperopt parameter values
+        lookback = self.lookback_period.value
+        volume_ma_period = self.volume_ma_period.value
+        atr_period = self.atr_period.value
+        rsi_period = self.rsi_period.value
+
+        # Get pre-calculated indicators for current hyperopt values
+        range_high = dataframe[f"range_high_{lookback}"]
+        range_low = dataframe[f"range_low_{lookback}"]
+        volume_ma = dataframe[f"volume_ma_{volume_ma_period}"]
+        atr = dataframe[f"atr_{atr_period}"]
+        rsi = dataframe[f"rsi_{rsi_period}"]
 
         # Calculate dynamic targets based on ATR
-        dataframe["long_target"] = dataframe["range_high"] + (
-            dataframe["atr"] * self.take_profit_mult.value
-        )
-        dataframe["short_target"] = dataframe["range_low"] - (
-            dataframe["atr"] * self.take_profit_mult.value
-        )
+        long_target = range_high + (atr * self.take_profit_mult.value)
+        short_target = range_low - (atr * self.take_profit_mult.value)
 
         # LONG EXIT
         dataframe.loc[
             (
-                (
-                    dataframe["close"]
-                    < dataframe["range_high"] * self.box_reentry_buffer.value
-                )  # Back into box
-                | (dataframe["close"] >= dataframe["long_target"])  # Target reached
-                | (dataframe["rsi"] > 75)  # Overbought
+                (dataframe["close"] < range_high * self.box_reentry_buffer.value)  # Back into box
+                | (dataframe["close"] >= long_target)  # Target reached
+                | (rsi > 75)  # Overbought
                 | (dataframe["momentum"] < -1.0)  # Momentum reversal
-                | (
-                    dataframe["volume"] < dataframe["volume_ma"] * 0.5
-                )  # Volume dried up
+                | (dataframe["volume"] < volume_ma * 0.5)  # Volume dried up
             ),
             "exit_long",
         ] = 1
@@ -302,15 +276,12 @@ class ConsolidationBreakout_05(IStrategy):
         dataframe.loc[
             (
                 (
-                    dataframe["close"]
-                    > dataframe["range_low"] * (2 - self.box_reentry_buffer.value)
+                    dataframe["close"] > range_low * (2 - self.box_reentry_buffer.value)
                 )  # Back into box
-                | (dataframe["close"] <= dataframe["short_target"])  # Target reached
-                | (dataframe["rsi"] < 25)  # Oversold
+                | (dataframe["close"] <= short_target)  # Target reached
+                | (rsi < 25)  # Oversold
                 | (dataframe["momentum"] > 1.0)  # Momentum reversal
-                | (
-                    dataframe["volume"] < dataframe["volume_ma"] * 0.5
-                )  # Volume dried up
+                | (dataframe["volume"] < volume_ma * 0.5)  # Volume dried up
             ),
             "exit_short",
         ] = 1
@@ -333,19 +304,38 @@ class ConsolidationBreakout_05(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get hyperopt parameter values
+        lookback = self.lookback_period.value
+        atr_period = self.atr_period.value
+        rsi_period = self.rsi_period.value
+
+        range_high = last_candle[f"range_high_{lookback}"]
+        range_low = last_candle[f"range_low_{lookback}"]
+        range_width = range_high - range_low
+        range_width_pct = (range_width / range_low * 100) if range_low > 0 else 0
+        atr = last_candle[f"atr_{atr_period}"]
+        rsi = last_candle[f"rsi_{rsi_period}"]
+
+        # Calculate consolidation status
+        range_atr_ratio = range_width / atr if atr > 0 else 0
+        is_consolidating = (range_atr_ratio < self.consolidation_atr_max.value * 2) and (
+            range_width_pct < 3.0
+        )
+
         # Quick profit taking if momentum is strong
         if current_profit > 0.015:
-            if not trade.is_short and last_candle["rsi"] > 70:
+            if not trade.is_short and rsi > 70:
                 return "take_profit_overbought"
-            if trade.is_short and last_candle["rsi"] < 30:
+            if trade.is_short and rsi < 30:
                 return "take_profit_oversold"
 
         # Exit if consolidation forms again (breakout failed)
-        if last_candle["is_consolidating"] and last_candle["consol_count"] > 3:
+        if is_consolidating:
             return "new_consolidation"
 
         # Exit if volume dries up significantly
-        if last_candle["volume"] < last_candle["volume_ma"] * 0.3:
+        volume_ma = last_candle[f"volume_ma_{self.volume_ma_period.value}"]
+        if last_candle["volume"] < volume_ma * 0.3:
             return "no_volume"
 
         # Time-based exit
@@ -382,8 +372,11 @@ class ConsolidationBreakout_05(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
+        # Get ATR based on hyperopt parameter
+        atr = last_candle[f"atr_{self.atr_period.value}"]
+
         # Dynamic stop based on ATR
-        atr_stop = -(last_candle["atr"] * 2 / trade.open_rate)
+        atr_stop = -(atr * 2 / trade.open_rate)
 
         # Tighten stop after profit
         if current_profit > 0.02:
@@ -418,12 +411,15 @@ class ConsolidationBreakout_05(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1].squeeze()
 
-        # Don't enter if range is too narrow (not worth the risk)
-        if last_candle["range_width_pct"] < 0.5:
-            return False
+        # Get hyperopt parameter values
+        lookback = self.lookback_period.value
 
-        # Don't enter if we just had a false breakout
-        if last_candle["false_breakout_up"] or last_candle["false_breakout_down"]:
+        range_high = last_candle[f"range_high_{lookback}"]
+        range_low = last_candle[f"range_low_{lookback}"]
+        range_width_pct = ((range_high - range_low) / range_low * 100) if range_low > 0 else 0
+
+        # Don't enter if range is too narrow (not worth the risk)
+        if range_width_pct < 0.5:
             return False
 
         # Avoid low liquidity periods
