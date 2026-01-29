@@ -465,68 +465,20 @@ class FractalStrategyV2_Modified(IStrategy):
         atr_now = last_candle.get("atr", 0)
 
         # ATR-based trailing stop using built-in max_rate/min_rate for persistence
-        if not trade.is_short:
-            highest_rate = trade.max_rate
-            trail_price = highest_rate - (atr_now * self.atr_trailing_k.value)
-            if current_rate < trail_price:
-                return "atr_trailing_exit"
-        else:
-            lowest_rate = trade.min_rate
-            trail_price = lowest_rate + (atr_now * self.atr_trailing_k.value)
-            if current_rate > trail_price:
-                return "atr_trailing_exit"
+        if atr_now > 0:
+            if not trade.is_short:
+                highest_rate = trade.max_rate
+                trail_price = highest_rate - (atr_now * self.atr_trailing_k.value)
+                if current_rate < trail_price:
+                    return "atr_trailing_exit"
+            else:
+                lowest_rate = trade.min_rate
+                trail_price = lowest_rate + (atr_now * self.atr_trailing_k.value)
+                if current_rate > trail_price:
+                    return "atr_trailing_exit"
 
         return None
 
-    def custom_stoploss(
-        self,
-        pair: str,
-        trade: "Trade",
-        current_time: datetime,
-        current_rate: float,
-        current_profit: float,
-        **kwargs,
-    ) -> float:
-        """
-        Dynamic stoploss based on fractal levels and ATR.
-        """
-        # Get stored fractal values
-        if not hasattr(self, "custom_info"):
-            return -1  # Return max stoploss if no info available
-
-        if pair not in self.custom_info:
-            return -1  # Return max stoploss if no info available
-
-        trade_info = self.custom_info[pair]
-        fractal_top_entry = trade_info.get("fractal_top_entry")
-        fractal_bottom_entry = trade_info.get("fractal_bottom_entry")
-        atr_entry = trade_info.get("atr_entry", 0)
-
-        if fractal_top_entry is None or fractal_bottom_entry is None:
-            return -1  # Return max stoploss if values not available
-
-        # Calculate stoploss based on fractal levels
-        if not trade.is_short:
-            # Long position: stop below fractal bottom
-            stoploss_price = fractal_bottom_entry - (atr_entry * 0.5)  # Add ATR buffer
-            stoploss_pct = (trade.open_rate - stoploss_price) / trade.open_rate
-
-            # Move stoploss to breakeven after certain profit
-            if current_profit > 0.015:
-                breakeven_stop = -0.002  # Small buffer below breakeven
-                return max(breakeven_stop, -stoploss_pct)
-        else:
-            # Short position: stop above fractal top
-            stoploss_price = fractal_top_entry + (atr_entry * 0.5)  # Add ATR buffer
-            stoploss_pct = (stoploss_price - trade.open_rate) / trade.open_rate
-
-            # Move stoploss to breakeven after certain profit
-            if current_profit > 0.015:
-                breakeven_stop = -0.002  # Small buffer below breakeven
-                return max(breakeven_stop, -stoploss_pct)
-
-        # Ensure stoploss is not worse than the configured maximum
-        return max(-stoploss_pct, self.stoploss)
 
     def leverage(
         self,

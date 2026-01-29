@@ -330,6 +330,10 @@ class MultiIndicatorMomentum_Modified(IStrategy):
         # Calculate ATR
         indicators[f"atr_{atr_period}"] = ta.ATR(dataframe, timeperiod=atr_period)
 
+        # Pre-calculate ATR for trailing stop range (7-30)
+        for p in range(7, 31):
+            indicators[f"atr_{p}"] = ta.ATR(dataframe, timeperiod=p)
+
         # Calculate Stochastic RSI
         stoch_rsi_period = self._get_param_value(self.stoch_rsi_period)
         stoch_rsi_smooth_k = self._get_param_value(self.stoch_rsi_smooth_k)
@@ -614,20 +618,22 @@ class MultiIndicatorMomentum_Modified(IStrategy):
         dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = dataframe.iloc[-1]
 
-        # Calculate ATR dynamically for custom_exit if not in dataframe
+        # Use pre-calculated ATR from dataframe
         atr_period = int(self._get_param_value(self.trailing_atr_period))
-        atr = ta.ATR(dataframe, timeperiod=atr_period).iloc[-1]
+        atr_col = f"atr_{atr_period}"
+        atr = last_candle.get(atr_col, 0)
 
-        if not trade.is_short:
-            highest_rate = trade.max_rate
-            trail_price = highest_rate - (atr * self._get_param_value(self.trailing_atr_k))
-            if current_rate < trail_price:
-                return "atr_trailing_exit"
-        else:
-            lowest_rate = trade.min_rate
-            trail_price = lowest_rate + (atr * self._get_param_value(self.trailing_atr_k))
-            if current_rate > trail_price:
-                return "atr_trailing_exit"
+        if atr > 0:
+            if not trade.is_short:
+                highest_rate = trade.max_rate
+                trail_price = highest_rate - (atr * self._get_param_value(self.trailing_atr_k))
+                if current_rate < trail_price:
+                    return "atr_trailing_exit"
+            else:
+                lowest_rate = trade.min_rate
+                trail_price = lowest_rate + (atr * self._get_param_value(self.trailing_atr_k))
+                if current_rate > trail_price:
+                    return "atr_trailing_exit"
 
         return None
 

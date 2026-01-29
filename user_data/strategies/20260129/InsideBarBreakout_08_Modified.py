@@ -304,61 +304,20 @@ class InsideBarBreakout_08_Modified(IStrategy):
         atr = last_candle[f"atr_{self.atr_period.value}"]
 
         # ATR-based trailing stop using built-in max_rate/min_rate for persistence
-        if not trade.is_short:
-            highest_rate = trade.max_rate
-            trail_price = highest_rate - (atr * self.trailing_atr_k.value)
-            if current_rate < trail_price:
-                return "atr_trailing_exit"
-        else:
-            lowest_rate = trade.min_rate
-            trail_price = lowest_rate + (atr * self.trailing_atr_k.value)
-            if current_rate > trail_price:
-                return "atr_trailing_exit"
+        if atr > 0:
+            if not trade.is_short:
+                highest_rate = trade.max_rate
+                trail_price = highest_rate - (atr * self.trailing_atr_k.value)
+                if current_rate < trail_price:
+                    return "atr_trailing_exit"
+            else:
+                lowest_rate = trade.min_rate
+                trail_price = lowest_rate + (atr * self.trailing_atr_k.value)
+                if current_rate > trail_price:
+                    return "atr_trailing_exit"
 
         return None
 
-    def custom_stoploss(
-        self,
-        pair: str,
-        trade: "Trade",
-        current_time: datetime,
-        current_rate: float,
-        current_profit: float,
-        **kwargs,
-    ) -> float:
-        """
-        Custom stoploss logic based on mother bar and ATR
-        """
-
-        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        last_candle = dataframe.iloc[-1].squeeze()
-
-        # Get ATR using current hyperopt parameter value
-        atr_period = self.atr_period.value
-        atr = last_candle[f"atr_{atr_period}"]
-
-        # Use mother bar as natural stop level
-        if not np.isnan(last_candle["mother_high"]) and not np.isnan(last_candle["mother_low"]):
-            if not trade.is_short:
-                # For long, stop below mother bar low
-                stop_price = last_candle["mother_low"] - (atr * 0.5)
-                stop_pct = -(trade.open_rate - stop_price) / trade.open_rate
-                return max(stop_pct, self.stoploss)
-            else:
-                # For short, stop above mother bar high
-                stop_price = last_candle["mother_high"] + (atr * 0.5)
-                stop_pct = -(stop_price - trade.open_rate) / trade.open_rate
-                return max(stop_pct, self.stoploss)
-
-        # Progressive stops based on profit
-        if current_profit > 0.015:
-            return -0.003
-        elif current_profit > 0.008:
-            return -0.005
-        elif current_profit > 0.004:
-            return -0.008
-
-        return self.stoploss
 
     def confirm_trade_entry(
         self,

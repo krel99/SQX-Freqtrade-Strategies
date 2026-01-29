@@ -202,41 +202,44 @@ class KeltnerATRBreakout_10_Modified(IStrategy):
 
         # Channel width
         kc_width = kc_upper - kc_lower
+        dataframe["kc_width_pct"] = (kc_width / ema) * 100
 
         # Detect breakouts
         close_above_upper = dataframe["close"] > kc_upper
         close_below_lower = dataframe["close"] < kc_lower
 
         # First close above/below band
-        breakout_up = close_above_upper & (close_above_upper.shift(1) == False)
-        breakout_down = close_below_lower & (close_below_lower.shift(1) == False)
+        dataframe["breakout_up"] = close_above_upper & (close_above_upper.shift(1) == False)
+        dataframe["breakout_down"] = close_below_lower & (close_below_lower.shift(1) == False)
 
         # Sustained breakout (multiple candles)
-        sustained_breakout_up = close_above_upper.rolling(window=breakout_candles).min() == 1
-        sustained_breakout_down = close_below_lower.rolling(window=breakout_candles).min() == 1
+        dataframe["sustained_breakout_up"] = close_above_upper.rolling(window=breakout_candles).min() == 1
+        dataframe["sustained_breakout_down"] = close_below_lower.rolling(window=breakout_candles).min() == 1
 
         # Volume surge
-        volume_surge = dataframe["volume"] > (volume_ma * volume_surge_mult)
+        dataframe["volume_surge"] = dataframe["volume"] > (volume_ma * volume_surge_mult)
 
         # Volatility squeeze detection (KC inside BB = low volatility)
-        squeeze = (kc_upper < dataframe["bb_upper"]) & (kc_lower > dataframe["bb_lower"])
-        squeeze_release = (~squeeze) & squeeze.shift(1)
+        dataframe["squeeze"] = (kc_upper < dataframe["bb_upper"]) & (kc_lower > dataframe["bb_lower"])
+        dataframe["squeeze_release"] = (~dataframe["squeeze"]) & dataframe["squeeze"].shift(1)
 
         # Trend determination
-        uptrend = dataframe["close"] > ema
-        downtrend = dataframe["close"] < ema
+        dataframe["uptrend"] = dataframe["close"] > ema
+        dataframe["downtrend"] = dataframe["close"] < ema
 
         # EMA slope for momentum
-        ema_slope = (ema - ema.shift(5)) / ema.shift(5) * 100
+        dataframe["ema_slope"] = (ema - ema.shift(5)) / ema.shift(5) * 100
 
         # False breakout detection
         lookback = 3
-        false_breakout_up = (breakout_up.rolling(window=lookback).max() == 1) & (
+        dataframe["false_breakout_up"] = (dataframe["breakout_up"].rolling(window=lookback).max() == 1) & (
             dataframe["close"] < kc_upper
         )
-        false_breakout_down = (breakout_down.rolling(window=lookback).max() == 1) & (
+        dataframe["false_breakout_down"] = (dataframe["breakout_down"].rolling(window=lookback).max() == 1) & (
             dataframe["close"] > kc_lower
         )
+
+        dataframe["volatility_ratio"] = volatility_ratio
 
         # LONG breakout
         dataframe.loc[
@@ -245,10 +248,10 @@ class KeltnerATRBreakout_10_Modified(IStrategy):
                 & (~is_weekend)  # Weekend filter
                 & (dataframe["sustained_breakout_up"])  # Sustained breakout
                 & (dataframe["volume_surge"])  # Volume confirmation
-                & (dataframe["rsi"] > self.rsi_min_long.value)  # Not oversold
-                & (dataframe["rsi"] < self.rsi_max_long.value)  # Not overbought
-                & (dataframe["roc"] > self.roc_threshold.value)  # Positive momentum
-                & (dataframe["adx"] > self.adx_min.value)  # Trending market
+                & (rsi > self.rsi_min_long.value)  # Not oversold
+                & (rsi < self.rsi_max_long.value)  # Not overbought
+                & (roc > self.roc_threshold.value)  # Positive momentum
+                & (adx > self.adx_min.value)  # Trending market
                 & (dataframe["false_breakout_up"].shift(1) == False)  # No recent false breakout
                 & (dataframe["strong_candle"])  # Strong breakout candle
                 & (dataframe["ema_slope"] > 0)  # EMA trending up
@@ -269,10 +272,10 @@ class KeltnerATRBreakout_10_Modified(IStrategy):
                 & (~is_weekend)  # Weekend filter
                 & (dataframe["sustained_breakout_down"])  # Sustained breakout
                 & (dataframe["volume_surge"])  # Volume confirmation
-                & (dataframe["rsi"] < self.rsi_max_short.value)  # Not overbought
-                & (dataframe["rsi"] > self.rsi_min_short.value)  # Not oversold
-                & (dataframe["roc"] < -self.roc_threshold.value)  # Negative momentum
-                & (dataframe["adx"] > self.adx_min.value)  # Trending market
+                & (rsi < self.rsi_max_short.value)  # Not overbought
+                & (rsi > self.rsi_min_short.value)  # Not oversold
+                & (roc < -self.roc_threshold.value)  # Negative momentum
+                & (adx > self.adx_min.value)  # Trending market
                 & (dataframe["false_breakout_down"].shift(1) == False)  # No recent false breakout
                 & (dataframe["strong_candle"])  # Strong breakout candle
                 & (dataframe["ema_slope"] < 0)  # EMA trending down
@@ -313,62 +316,20 @@ class KeltnerATRBreakout_10_Modified(IStrategy):
         atr = last_candle[f"atr_{self.atr_trail_period.value}"]
 
         # ATR-based trailing stop using built-in max_rate/min_rate for persistence
-        if not trade.is_short:
-            highest_rate = trade.max_rate
-            trail_price = highest_rate - (atr * self.atr_trail_mult.value)
-            if current_rate < trail_price:
-                return "atr_trailing_exit"
-        else:
-            lowest_rate = trade.min_rate
-            trail_price = lowest_rate + (atr * self.atr_trail_mult.value)
-            if current_rate > trail_price:
-                return "atr_trailing_exit"
+        if atr > 0:
+            if not trade.is_short:
+                highest_rate = trade.max_rate
+                trail_price = highest_rate - (atr * self.atr_trail_mult.value)
+                if current_rate < trail_price:
+                    return "atr_trailing_exit"
+            else:
+                lowest_rate = trade.min_rate
+                trail_price = lowest_rate + (atr * self.atr_trail_mult.value)
+                if current_rate > trail_price:
+                    return "atr_trailing_exit"
 
         return None
 
-    def custom_stoploss(
-        self,
-        pair: str,
-        trade: "Trade",
-        current_time: datetime,
-        current_rate: float,
-        current_profit: float,
-        **kwargs,
-    ) -> float:
-        """
-        Custom stoploss logic using ATR
-        """
-
-        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        last_candle = dataframe.iloc[-1].squeeze()
-
-        # Dynamic stop based on ATR
-        atr_stop = -(last_candle["atr"] * 2.5 / trade.open_rate)
-
-        # Use Keltner Channel as stop level
-        if not trade.is_short:
-            kc_stop = -(trade.open_rate - last_candle["kc_lower"]) / trade.open_rate
-        else:
-            kc_stop = -(last_candle["kc_upper"] - trade.open_rate) / trade.open_rate
-
-        # Use the tighter of the two
-        dynamic_stop = max(atr_stop, kc_stop, self.stoploss)
-
-        # Progressive stops based on profit
-        if current_profit > 0.03:
-            return -0.008
-        elif current_profit > 0.02:
-            return -0.012
-        elif current_profit > 0.015:
-            return -0.015
-        elif current_profit > 0.01:
-            return max(dynamic_stop, -0.02)
-
-        # Tighten stop over time
-        if current_time - trade.open_date_utc > pd.Timedelta(hours=3):
-            return max(dynamic_stop, -0.03)
-
-        return dynamic_stop
 
     def confirm_trade_entry(
         self,

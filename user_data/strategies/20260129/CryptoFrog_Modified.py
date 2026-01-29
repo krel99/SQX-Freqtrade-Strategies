@@ -482,15 +482,16 @@ class CryptoFrog_Modified(IStrategy):
         last_candle = dataframe.iloc[-1]
         atr = last_candle.get("atr", 0)
 
-        if not trade.is_short:
-            highest_rate = trade.max_rate
-            trail_price = highest_rate - (atr * self.trailing_atr_k.value)
-            if current_rate < trail_price:
-                return "atr_trailing_exit"
-        else:
-            lowest_rate = trade.min_rate
-            trail_price = lowest_rate + (atr * self.trailing_atr_k.value)
-            if current_rate > trail_price:
-                return "atr_trailing_exit"
+        if atr > 0:
+            if not trade.is_short:
+                highest_rate = trade.max_rate
+                trail_price = highest_rate - (atr * self.trailing_atr_k.value)
+                if current_rate < trail_price:
+                    return "atr_trailing_exit"
+            else:
+                lowest_rate = trade.min_rate
+                trail_price = lowest_rate + (atr * self.trailing_atr_k.value)
+                if current_rate > trail_price:
+                    return "atr_trailing_exit"
 
         return None

@@ -269,54 +269,20 @@ class ConsolidationBreakout_05_Modified(IStrategy):
         atr = last_candle[f"atr_{self.atr_period.value}"]
 
         # ATR-based trailing stop using built-in max_rate/min_rate for persistence
-        if not trade.is_short:
-            highest_rate = trade.max_rate
-            trail_price = highest_rate - (atr * self.trailing_atr_k.value)
-            if current_rate < trail_price:
-                return "atr_trailing_exit"
-        else:
-            lowest_rate = trade.min_rate
-            trail_price = lowest_rate + (atr * self.trailing_atr_k.value)
-            if current_rate > trail_price:
-                return "atr_trailing_exit"
+        if atr > 0:
+            if not trade.is_short:
+                highest_rate = trade.max_rate
+                trail_price = highest_rate - (atr * self.trailing_atr_k.value)
+                if current_rate < trail_price:
+                    return "atr_trailing_exit"
+            else:
+                lowest_rate = trade.min_rate
+                trail_price = lowest_rate + (atr * self.trailing_atr_k.value)
+                if current_rate > trail_price:
+                    return "atr_trailing_exit"
 
         return None
 
-    def custom_stoploss(
-        self,
-        pair: str,
-        trade: "Trade",
-        current_time: datetime,
-        current_rate: float,
-        current_profit: float,
-        **kwargs,
-    ) -> float:
-        """
-        Custom stoploss logic using ATR and range
-        """
-
-        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        last_candle = dataframe.iloc[-1].squeeze()
-
-        # Get ATR based on hyperopt parameter
-        atr = last_candle[f"atr_{self.atr_period.value}"]
-
-        # Dynamic stop based on ATR
-        atr_stop = -(atr * 2 / trade.open_rate)
-
-        # Tighten stop after profit
-        if current_profit > 0.02:
-            return -0.005
-        elif current_profit > 0.01:
-            return -0.008
-        elif current_profit > 0.005:
-            return max(atr_stop, -0.015)
-
-        # Progressive stop over time
-        if current_time - trade.open_date_utc > pd.Timedelta(hours=1):
-            return max(atr_stop, -0.02)
-
-        return max(atr_stop, self.stoploss)
 
     def confirm_trade_entry(
         self,
